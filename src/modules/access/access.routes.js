@@ -1,7 +1,14 @@
 
 import express from "express";
 import { sendCommand } from "../serial/serial.service.js";
-import router from "../serial/serial.service.js";
+import { entrada,entradaVisitante } from "./access.controller.js";
+
+const router = express.Router();
+
+router.post('/entrada', entrada);
+
+router.post("/entrada-visitante", entradaVisitante);
+
 
 router.post('/open-main', (req, res) => {
   sendCommand('open_main');

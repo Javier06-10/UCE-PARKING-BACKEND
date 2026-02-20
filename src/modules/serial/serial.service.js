@@ -63,13 +63,15 @@ async function handleParkingUpdate(data) {
 function handleGateEvent(data) {
   console.log('🚪 Evento puerta:', data);
 }
-
 function sendCommand(command) {
 
-  if (!port || !port.isOpen) return;
+  if (!port || !port.isOpen) {
+    throw new Error("Serial no conectado");
+  }
 
   const json = JSON.stringify({ command });
   port.write(json + '\n');
 }
+
 
 export { initSerial, sendCommand };
