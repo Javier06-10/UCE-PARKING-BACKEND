@@ -5,6 +5,8 @@ import { updatePlazas } from '../parking/parking.service.js';
 
 let port;
 let parser;
+let lastNormal = -1;
+let lastVip = -1;
 
 function initSerial() {
 
@@ -34,6 +36,12 @@ function handleSerialData(data) {
 
     if (json.type === 'plaza_update') {
    updatePlazas(json.plazas);
+   if (global.io) {
+    global.io.emit('plaza_update', {
+      normal: json.plazas.filter(p => !p.vip && p.occupied).length,
+      vip: json.plazas.filter(p => p.vip && p.occupied).length,
+    });
+   }
 }
 
     if (json.type === 'parking_update') {

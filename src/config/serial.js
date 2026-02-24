@@ -1,12 +1,18 @@
 import { SerialPort } from "serialport";
+import { ReadlineParser } from "@serialport/parser-readline";
 import env from "./env.js";
+import { updatePlazas } from "../modules/parking/parking.service.js";
 
 let port;
+let parser;
 let reconnectTimeout;
+
+// Estado previo para detectar cambios reales
+let lastPlazaState = null;
 
 export const initSerial = () => {
   if (!env.serialPort) {
-    console.log("⚠ SERIAL_PORT no configurado");
+    console.log("⚠ SERIAL_PORT no configurado — serial deshabilitado");
     return;
   }
 
@@ -16,44 +22,13 @@ export const initSerial = () => {
     autoOpen: false,
   });
 
-  const connect = () => {
-    port.open((err) => {
-      if (err) {
-        console.log("❌ Error abriendo puerto:", err.message);
-        scheduleReconnect();
-        return;
-      }
-    });
-  };
-  port.on("data", (data) => {
-    const message = data.toString().trim();
+  // Parser línea a línea para recibir JSON completo
+  parser = port.pipe(new ReadlineParser({ delimiter: "\n" }));
 
-    console.log("Arduino:", message);
-
-    if (message.startsWith("PARKING:")) {
-      const parts = message.split(":");
-
-      const freeNormal = parts[2];
-      const freeVip = parts[4];
-
-      console.log("Libre Normal:", freeNormal);
-      console.log("Libre VIP:", freeVip);
-
-      // Aquí podemos guardar en Supabase
-    }
-
-    if (message === "ACK:MAIN_OPENED") {
-      console.log("Puerta principal confirmada");
-    }
-  });
+  parser.on("data", handleSerialData);
 
   port.on("open", () => {
     console.log(`🔌 Serial conectado en ${env.serialPort}`);
-  });
-
-  port.on("data", (data) => {
-    const message = data.toString().trim();
-    console.log("📡 Arduino:", message);
   });
 
   port.on("error", (err) => {
@@ -65,9 +40,17 @@ export const initSerial = () => {
     scheduleReconnect();
   });
 
+  const connect = () => {
+    port.open((err) => {
+      if (err) {
+        console.log("❌ Error abriendo puerto:", err.message);
+        scheduleReconnect();
+      }
+    });
+  };
+
   const scheduleReconnect = () => {
     if (reconnectTimeout) return;
-
     reconnectTimeout = setTimeout(() => {
       console.log("🔄 Intentando reconectar...");
       reconnectTimeout = null;
@@ -77,5 +60,65 @@ export const initSerial = () => {
 
   connect();
 };
+
+// ─── Procesar datos del Arduino ────────────────────────────────────────────────
+function handleSerialData(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+
+  try {
+    const json = JSON.parse(trimmed);
+
+    if (json.type === "plaza_update" && json.plazas) {
+      handlePlazaUpdate(json.plazas);
+    }
+
+    if (json.type === "gate_event") {
+      console.log("🚪 Evento puerta:", json);
+    }
+
+  } catch {
+    // Datos no JSON del Arduino (ej: ARDUINO_READY)
+    console.log("📡 Arduino:", trimmed);
+  }
+}
+
+// ─── Solo procesar si hubo cambio real ─────────────────────────────────────────
+function handlePlazaUpdate(plazas) {
+  const currentState = JSON.stringify(
+    plazas.map(p => ({ id: p.id, occupied: p.occupied }))
+  );
+
+  // Ignorar si el estado no cambió
+  if (currentState === lastPlazaState) return;
+
+  lastPlazaState = currentState;
+
+  console.log("🅿️ Cambio detectado en plazas:", plazas.map(p => `${p.id}:${p.occupied ? "⬛" : "⬜"}`).join(" "));
+
+  // Actualizar BD
+  updatePlazas(plazas);
+
+  // Emitir por Socket.IO solo cuando hay cambio
+  if (global.io) {
+    global.io.emit("plaza_update", {
+      plazas,
+      normal: plazas.filter(p => !p.vip && p.occupied).length,
+      vip: plazas.filter(p => p.vip && p.occupied).length,
+    });
+  }
+}
+
+// ─── Enviar comando al Arduino ─────────────────────────────────────────────────
+export function sendCommand(command) {
+  if (!port || !port.isOpen) {
+    console.error("⚠ Serial no conectado — comando ignorado:", command);
+    return;
+  }
+
+  const json = JSON.stringify({ command });
+  port.write(json + "\n");
+  console.log("📤 Comando enviado:", command);
+}
 
 export const getSerialPort = () => port;
