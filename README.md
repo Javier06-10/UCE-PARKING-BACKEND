@@ -133,7 +133,7 @@ Respuesta incluye `duracion_minutos` calculado para cada registro.
 
 | Método | Ruta | Auth | Descripción |
 |---|---|---|---|
-| `GET` | `/` | ✅ | Lista paginada |
+| `GET` | `/` | ✅ | Lista paginada (Autofiltrada por el usuario activo) |
 | `GET` | `/:id` | ✅ | Detalle con datos de persona |
 | `GET` | `/placa/:placa` | ✅ | Buscar por placa |
 | `GET` | `/:id/history` | ✅ | Historial de accesos del vehículo |
@@ -237,6 +237,9 @@ Respuesta:
   ],
   "ocupacion_por_dia": [
     { "fecha": "2026-01-01", "entradas": 15 }
+  ],
+  "ocupacion_por_semana": [
+    { "semana": "2026-W01", "entradas": 15 }
   ]
 }
 ```
@@ -248,6 +251,28 @@ Respuesta:
 | Método | Ruta | Auth | Descripción |
 |---|---|---|---|
 | `GET` | `/` | ✅ | Listar usuarios |
+
+---
+
+### 📅 Reservas — `/api/reserva`
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| `POST` | `/` | ✅ | Crear reserva (max 2 horas) |
+| `GET` | `/mis-reservas` | ✅ | Listar historial y reservas activas del usuario |
+| `PUT` | `/:id/cancelar` | ✅ | Cancelar reserva propia |
+
+**POST `/`** — Body:
+```json
+{
+  "plazaId": 5,
+  "fechaInicio": "2026-02-25T14:00:00.000Z",
+  "fechaFin": "2026-02-25T16:00:00.000Z"
+}
+```
+*Las reservas no pueden sobrepasar las 2 horas de duración máxima ni solaparse con otras.*
+
+> **Nota Crons:** Un *cronjob* en el servidor se ejecuta cada minuto verificando continuamente la expiración de las reservas, cancelándolas automáticamente en la base de datos y notificando la penalización/abandono vía WebSockets en tiempo real al usuario infractor.
 
 ---
 
@@ -266,6 +291,11 @@ const socket = io('http://localhost:4000');
 | `plaza_update` | `{ plazas, normal, vip }` | Cambio de estado de plazas (solo cuando hay cambio real) |
 | `access-event` | `{ type, placa, timestamp }` | Entrada o salida de vehículo |
 | `ticket-emitido` | `{ ticketId, placa, emision }` | Ticket emitido a visitante |
+| `RESERVA_CREADA_{userId}` | `{ mensaje, reserva }` | Notificación directa de resumen al autor de reserva |
+| `RESERVA_EXPIRADA_{userId}`| `{ mensaje, reservaId, plazaId }`| Alerta de tiempo excedido emitido por el Cron |
+| `ADMIN_NUEVO_INGRESO` | `{ mensaje, ticket }` | Notificación a los admins de ingreso físico |
+| `ADMIN_NUEVA_RESERVA` | `{ mensaje, reserva }` | Notificación a los admins de reserva remota |
+| `ADMIN_TICKET_ACTUALIZADO` | `{ mensaje, ticket }` | Informe de alteración de estado de un ticket |
 
 ---
 
@@ -369,4 +399,6 @@ fetch('http://localhost:4000/api/parking/status', {
 | 4 | Captar hora de entrada y salida | ✅ 95% |
 | 5 | Registrar periodo de permanencia | ✅ 95% |
 | 6 | Disponibilidad en tiempo real | ✅ 95% |
-| 7 | Reportes de ocupación por periodo | ✅ 90% |
+| 7 | Reportes de ocupación por periodo | ✅ 100% (Incluye horas, días, semanas) |
+| 8 | RF15: Notificaciones vía WebSockets | ✅ 100% |
+| 9 | Sistema de Reservas Anticipada (Mobile) | ✅ 100% |

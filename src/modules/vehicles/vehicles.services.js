@@ -1,7 +1,7 @@
 import supabase from "../../config/supabase.js";
 
 // ─── Listar todos los vehículos ────────────────────────────────────────────────
-export async function getAllVehicles({ page = 1, limit = 20, search = "" } = {}) {
+export async function getAllVehicles({ page = 1, limit = 20, search = "", persona_id } = {}) {
   const from = (page - 1) * limit;
   const to = from + limit - 1;
 
@@ -17,6 +17,11 @@ export async function getAllVehicles({ page = 1, limit = 20, search = "" } = {})
 
   if (search) {
     query = query.or(`placa.ilike.%${search}%,Marca.ilike.%${search}%`);
+  }
+
+  // Filtrar por usuario (si se proporciona)
+  if (persona_id) {
+    query = query.eq("persona_id", persona_id);
   }
 
   const { data, error, count } = await query;
