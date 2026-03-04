@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 import app from "./app.js";
 import env from "./config/env.js";
 import { initSerial } from "./config/serial.js";
+import { initCronJobs } from "./core/cron.service.js"; // Importar cron jobs
 
 const server = http.createServer(app);
 
@@ -16,6 +17,9 @@ app.set("io", io);
 
 // Inicializar serial después de que io esté disponible
 initSerial();
+
+// Inicializar Cron Jobs
+initCronJobs();
 
 io.on("connection", (socket) => {
   console.log("🟢 Cliente conectado:", socket.id);

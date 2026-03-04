@@ -39,6 +39,15 @@ export async function createTicket(req, res) {
   try {
     const { placa, color, marca, plazaAsignada, personaId, dispositivoEntradaId } = req.body;
     const data = await emitirTicket({ placa, color, marca, plazaAsignada, personaId, dispositivoEntradaId });
+    
+    // Notificar a los administradores de un nuevo ingreso
+    import("../../core/notifications.service.js").then(({ notifyAdmin }) => {
+      notifyAdmin("NUEVO_INGRESO", {
+        mensaje: `Vehículo ${placa} ha ingresado.`,
+        ticket: data
+      });
+    });
+
     res.status(201).json({ ok: true, data });
   } catch (error) {
     console.error("[tickets] createTicket:", error.message);
@@ -51,6 +60,15 @@ export async function patchTicketEstado(req, res) {
   try {
     const { id_estado, Estado } = req.body;
     const data = await updateTicketEstado(req.params.id, { id_estado, Estado });
+    
+    // Notificar a los administradores de una salida / actualización
+    import("../../core/notifications.service.js").then(({ notifyAdmin }) => {
+      notifyAdmin("TICKET_ACTUALIZADO", {
+        mensaje: `Ticket ${req.params.id} actualizado a estado ${Estado || id_estado}.`,
+        ticket: data
+      });
+    });
+
     res.json({ ok: true, data });
   } catch (error) {
     console.error("[tickets] patchEstado:", error.message);

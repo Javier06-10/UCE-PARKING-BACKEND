@@ -12,10 +12,17 @@ import {
 export async function listVehicles(req, res) {
   try {
     const { page = 1, limit = 20, search = "" } = req.query;
+    const persona_id = req.user?.id; // Obtener el ID del usuario logueado desde el token JWT
+    
+    if (!persona_id) {
+       return res.status(401).json({ ok: false, error: "Usuario no autenticado." });
+    }
+
     const result = await getAllVehicles({
       page: Number(page),
       limit: Number(limit),
-      search
+      search,
+      persona_id
     });
     res.json({ ok: true, ...result });
   } catch (error) {
