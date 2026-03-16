@@ -7,6 +7,7 @@ import ticketRoutes from "./modules/tickets/tickets.routes.js";
 import parkingRoutes from "./modules/parking/parking.routes.js";
 import reportRoutes from "./modules/reports/reports.routes.js";
 import reservaRoutes from "./modules/reserva/reserva.routes.js";
+import notificationRoutes from "./modules/notifications/notifications.routes.js";
 
 const app = express();
 
@@ -20,6 +21,7 @@ app.use("/api/tickets", ticketRoutes);
 app.use("/api/parking", parkingRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/reserva", reservaRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Backend Parking Running 🚗" });

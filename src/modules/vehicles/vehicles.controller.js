@@ -57,8 +57,8 @@ export async function getByPlaca(req, res) {
 // POST /api/vehicles
 export async function createVehicleHandler(req, res) {
   try {
-    const { placa, Marca, Color, persona_id } = req.body;
-    const data = await createVehicle({ placa, Marca, Color, persona_id });
+    const { placa, Marca, Color, modelo, persona_id } = req.body;
+    const data = await createVehicle({ placa, Marca, Color, modelo, persona_id });
     res.status(201).json({ ok: true, data });
   } catch (error) {
     console.error("[vehicles] createVehicle:", error.message);
@@ -69,8 +69,8 @@ export async function createVehicleHandler(req, res) {
 // PUT /api/vehicles/:id
 export async function updateVehicleHandler(req, res) {
   try {
-    const { placa, Marca, Color, persona_id } = req.body;
-    const data = await updateVehicle(req.params.id, { placa, Marca, Color, persona_id });
+    const { placa, Marca, Color, modelo, persona_id } = req.body;
+    const data = await updateVehicle(req.params.id, { placa, Marca, Color, modelo, persona_id });
     res.json({ ok: true, data });
   } catch (error) {
     console.error("[vehicles] updateVehicle:", error.message);

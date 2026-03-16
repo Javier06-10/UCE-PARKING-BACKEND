@@ -18,9 +18,9 @@ async function entrada(req, res) {
 
 async function entradaVisitante(req, res) {
   try {
-    const { nombre, placa, dispositivoEntradaId, adminPersonaId, motivo } = req.body;
+    const { nombre, placa, dispositivoEntradaId, adminPersonaId, motivo, ticketId, plazaId } = req.body;
     const registro = await registrarEntradaVisitante({
-      nombre, placa, dispositivoEntradaId, adminPersonaId, motivo
+      nombre, placa, dispositivoEntradaId, adminPersonaId, motivo, ticketId, plazaId
     });
     res.json({ ok: true, registro });
   } catch (error) {
@@ -31,8 +31,8 @@ async function entradaVisitante(req, res) {
 
 async function salida(req, res) {
   try {
-    const { placa, dispositivoSalidaId } = req.body;
-    const registro = await registrarSalida({ placa, dispositivoSalidaId });
+    const { placa, dispositivoSalidaId, ticketId } = req.body;
+    const registro = await registrarSalida({ placa, dispositivoSalidaId, ticketId });
     res.json({ ok: true, registro });
   } catch (error) {
     console.error("[access] salida:", error.message);

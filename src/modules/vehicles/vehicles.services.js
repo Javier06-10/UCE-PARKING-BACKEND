@@ -8,7 +8,7 @@ export async function getAllVehicles({ page = 1, limit = 20, search = "", person
   let query = supabase
     .from("vehiculos")
     .select(
-      `id, placa, Marca, Color, Fecha_Registro,
+      `id, placa, Marca, Color, modelo, Fecha_Registro,
        personas ( id, nombre, apellido, email, telefono )`,
       { count: "exact" }
     )
@@ -16,7 +16,7 @@ export async function getAllVehicles({ page = 1, limit = 20, search = "", person
     .range(from, to);
 
   if (search) {
-    query = query.or(`placa.ilike.%${search}%,Marca.ilike.%${search}%`);
+    query = query.or(`placa.ilike.%${search}%,Marca.ilike.%${search}%,modelo.ilike.%${search}%`);
   }
 
   // Filtrar por usuario (si se proporciona)
@@ -35,7 +35,7 @@ export async function getVehicleById(id) {
   const { data, error } = await supabase
     .from("vehiculos")
     .select(
-      `id, placa, Marca, Color, Fecha_Registro,
+      `id, placa, Marca, Color, modelo, Fecha_Registro,
        personas ( id, nombre, apellido, email, telefono )`
     )
     .eq("id", id)
@@ -50,7 +50,7 @@ export async function getVehicleByPlaca(placa) {
   const { data, error } = await supabase
     .from("vehiculos")
     .select(
-      `id, placa, Marca, Color, Fecha_Registro,
+      `id, placa, Marca, Color, modelo, Fecha_Registro,
        personas ( id, nombre, apellido, email, telefono )`
     )
     .eq("placa", placa)
@@ -61,7 +61,7 @@ export async function getVehicleByPlaca(placa) {
 }
 
 // ─── Crear vehículo ────────────────────────────────────────────────────────────
-export async function createVehicle({ placa, Marca, Color, persona_id }) {
+export async function createVehicle({ placa, Marca, Color, modelo, persona_id }) {
   if (!placa) throw new Error("La placa es requerida");
 
   // Verificar duplicado
@@ -70,7 +70,7 @@ export async function createVehicle({ placa, Marca, Color, persona_id }) {
 
   const { data, error } = await supabase
     .from("vehiculos")
-    .insert({ placa, Marca, Color, persona_id })
+    .insert({ placa, Marca, Color, modelo, persona_id })
     .select()
     .single();
 
@@ -79,7 +79,7 @@ export async function createVehicle({ placa, Marca, Color, persona_id }) {
 }
 
 // ─── Actualizar vehículo ───────────────────────────────────────────────────────
-export async function updateVehicle(id, { placa, Marca, Color, persona_id }) {
+export async function updateVehicle(id, { placa, Marca, Color, modelo, persona_id }) {
   // Si se cambia la placa, verificar que no colisione
   if (placa) {
     const existe = await getVehicleByPlaca(placa);
@@ -92,6 +92,7 @@ export async function updateVehicle(id, { placa, Marca, Color, persona_id }) {
   if (placa !== undefined) campos.placa = placa;
   if (Marca !== undefined) campos.Marca = Marca;
   if (Color !== undefined) campos.Color = Color;
+  if (modelo !== undefined) campos.modelo = modelo;
   if (persona_id !== undefined) campos.persona_id = persona_id;
 
   const { data, error } = await supabase

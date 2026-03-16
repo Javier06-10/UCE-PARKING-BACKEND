@@ -155,3 +155,88 @@ export async function descargarReporteExcel(req, res) {
   }
 }
 
+// POST /api/reports/preview — generar reporte en memoria para previsualizar (sin guardar)
+export async function previsualizarReporte(req, res) {
+  try {
+    const { fechaDesde, fechaHasta, zonaId, tipo } = req.body;
+
+    let reporte = null;
+    if (tipo === "EVENTOS") {
+      reporte = await getReporteEventos({ fechaDesde, fechaHasta });
+    } else {
+      reporte = await getReporteGeneral({
+        fechaDesde,
+        fechaHasta,
+        zonaId: zonaId ? Number(zonaId) : undefined
+      });
+    }
+
+    res.json({ ok: true, data: reporte });
+  } catch (error) {
+    console.error("[reports] previsualizarReporte:", error.message);
+    res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+// GET /api/reports/:id/preview — obtener datos de reporte existente para previsualizar
+export async function obtenerDatosReporte(req, res) {
+  try {
+    const { id } = req.params;
+
+    const { data: reporteRow, error } = await supabase
+      .from("reportes")
+      .select("*")
+      .eq("Id_Reporte", id)
+      .single();
+
+    if (error || !reporteRow) {
+      return res.status(404).json({ ok: false, message: "Reporte no encontrado" });
+    }
+
+    let payload = {};
+    try { payload = JSON.parse(reporteRow.Datos_Adjuntos_Ruta); } catch(e) {}
+
+    let reporteData = payload;
+    
+    // Si la data está truncada, recalcular
+    if (payload.resumen === "Data truncada por limite de bd") {
+        let dDesde = new Date(reporteRow.created_at).toISOString();
+        let dHasta = dDesde;
+
+        if (payload.periodo && payload.periodo.desde) {
+            dDesde = payload.periodo.desde;
+            dHasta = payload.periodo.hasta || payload.periodo.desde;
+        } else {
+            const textoDesc = reporteRow.Descripcion || "";
+            const fechasMatch = textoDesc.match(/Reporte (.*?) (.*?) - (.*?)$/) || textoDesc.match(/general (.*?) - (.*?)$/);
+            
+            if (fechasMatch && fechasMatch.length >= 3) {
+               if (fechasMatch.length === 4) {
+                   dDesde = fechasMatch[2].trim(); 
+                   dHasta = fechasMatch[3].trim();
+               } else {
+                   dDesde = fechasMatch[1].trim(); 
+                   dHasta = fechasMatch[2].trim();
+               }
+            }
+        }
+
+        if (reporteRow.Tipo_Reporte === "EVENTOS") {
+            reporteData = await getReporteEventos({ fechaDesde: dDesde, fechaHasta: dHasta });
+        } else {
+            reporteData = await getReporteGeneral({ fechaDesde: dDesde, fechaHasta: dHasta });
+        }
+    }
+
+    res.json({ 
+      ok: true, 
+      tipo: reporteRow.Tipo_Reporte,
+      descripcion: reporteRow.Descripcion,
+      fecha_creacion: reporteRow.created_at,
+      data: reporteData 
+    });
+  } catch (error) {
+    console.error("[reports] obtenerDatosReporte:", error.message);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+}
