@@ -2,18 +2,28 @@ import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
 import env from "./env.js";
 import { updatePlazas } from "../modules/parking/parking.service.js";
+import supabase from "../config/supabase.js";
 
 let port;
 let parser;
 let reconnectTimeout;
+let estadosCatalog = [];
 
 // Estado previo para detectar cambios reales
 let lastPlazaState = null;
 
-export const initSerial = () => {
+export const initSerial = async () => {
   if (!env.serialPort) {
     console.log("⚠ SERIAL_PORT no configurado — serial deshabilitado");
     return;
+  }
+
+  // Fetch catalog
+  try {
+    const { data: estados } = await supabase.from('estado_plaza').select('id_estado, nombre_estado');
+    estadosCatalog = estados || [];
+  } catch(e) {
+    console.error("Error fetching estado_plaza catalog for serial init", e);
   }
 
   port = new SerialPort({
@@ -96,8 +106,11 @@ function handlePlazaUpdate(plazas) {
 
   console.log("🅿️ Cambio detectado en plazas:", plazas.map(p => `${p.id}:${p.occupied ? "⬛" : "⬜"}`).join(" "));
 
+  const ESTADO_OCUPADA = estadosCatalog.find(e => e.nombre_estado === 'Ocupada')?.id_estado || 2;
+  const ESTADO_LIBRE = estadosCatalog.find(e => e.nombre_estado === 'Libre')?.id_estado || 1;
+
   // Actualizar BD
-  updatePlazas(plazas);
+  updatePlazas(plazas, ESTADO_OCUPADA, ESTADO_LIBRE);
 
   // Emitir por Socket.IO solo cuando hay cambio
   if (global.io) {

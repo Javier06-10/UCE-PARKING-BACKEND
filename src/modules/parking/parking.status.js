@@ -7,7 +7,7 @@ export async function getParkingStatus() {
     .from("zonas_estacionamiento")
     .select(`
       Id_Zona, Nombre_Zona, Capacidad_Total,
-      plazas ( Id_Plaza, Numero_Plaza, Estado_Actual, id_estado,
+      plazas ( Id_Plaza, Numero_Plaza, id_estado,
         estado_plaza ( id_estado, nombre_estado )
       )
     `);
@@ -17,8 +17,8 @@ export async function getParkingStatus() {
   // Calcular resumen por zona
   const resumen = zonas.map(zona => {
     const plazas = zona.plazas || [];
-    const ocupadas = plazas.filter(p => p.id_estado === 2).length;
-    const libres = plazas.filter(p => p.id_estado === 1).length;
+    const ocupadas = plazas.filter(p => p.estado_plaza?.nombre_estado === 'Ocupada').length;
+    const libres = plazas.filter(p => p.estado_plaza?.nombre_estado === 'Libre').length;
 
     return {
       id_zona: zona.Id_Zona,
@@ -54,7 +54,7 @@ export async function getPlazas({ zonaId, estado } = {}) {
   let query = supabase
     .from("plazas")
     .select(`
-      Id_Plaza, Numero_Plaza, Estado_Actual, Amplitud, Longitud, id_estado,
+      Id_Plaza, Numero_Plaza, Amplitud, Longitud, id_estado,
       estado_plaza ( id_estado, nombre_estado ),
       zonas_estacionamiento ( Id_Zona, Nombre_Zona )
     `)

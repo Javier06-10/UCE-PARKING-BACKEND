@@ -131,12 +131,17 @@ export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
     throw new Error("fechaDesde y fechaHasta son requeridos");
   }
 
+  // Filtrar por Fecha_Hora (timestamp del evento). Fecha_Creacion es el timestamp de inserción.
   const { data: eventos, error } = await supabase
     .from("eventos")
-    .select("*")
-    .gte("Fecha_Creacion", fechaDesde)
-    .lte("Fecha_Creacion", fechaHasta)
-    .order("Fecha_Creacion", { ascending: false });
+    .select(`
+      Id_Log, Fecha_Hora, Descripcion, Id_Plaza, Fecha_Creacion, id_persona,
+      tipo_evento:id_tipo_evento ( id_tipo, nombre_tipo ),
+      origen_evento:id_origen_evento ( id_origen, nombre )
+    `)
+    .gte("Fecha_Hora", fechaDesde)
+    .lte("Fecha_Hora", fechaHasta)
+    .order("Fecha_Hora", { ascending: false });
 
   if (error) {
     console.error("Error obteniendo eventos:", error);
@@ -150,28 +155,26 @@ export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
 }
 
 // ─── Guardar reporte en la BD ──────────────────────────────────────────────────
-export async function guardarReporte({ tipo, descripcion, datos, personaId }) {
-  // Truncate desc so it doesn't crash if it's too long
+export async function guardarReporte({ tipo, descripcion, datos, personaId, organizacion_id = null }) {
   const safeDesc = (descripcion || `Reporte generado el ${new Date().toISOString()}`).substring(0, 250);
-  
-  // Convert datos to JSON string, but if Datos_Adjuntos_Ruta is just a varchar we need to truncate.
-  // Ideally this would be a JSON or TEXT column, but we will store a safe summary snippet.
+
   const fullJsonString = JSON.stringify(datos);
-  const safeJsonString = fullJsonString.length > 250 
-      ? JSON.stringify({ 
-          resumen: "Data truncada por limite de bd", 
-          periodo: datos.periodo || {},
-          preview: fullJsonString.substring(0, 100) + "..." 
-        })
-      : fullJsonString;
+  const safeJsonString = fullJsonString.length > 250
+    ? JSON.stringify({
+        resumen: "Data truncada por limite de bd",
+        periodo: datos.periodo || {},
+        preview: fullJsonString.substring(0, 100) + "...",
+      })
+    : fullJsonString;
 
   const { data, error } = await supabase
     .from("reportes")
     .insert({
-      Tipo_Reporte: tipo || "OCUPACION",
-      Descripcion: safeDesc,
+      Tipo_Reporte:        tipo || "OCUPACION",
+      Descripcion:         safeDesc,
       Datos_Adjuntos_Ruta: safeJsonString,
-      persona_id: personaId || null
+      id_persona:          personaId       || null,  // schema FK: id_persona (uuid)
+      organizacion_id:     organizacion_id || null,
     })
     .select()
     .single();
@@ -186,13 +189,13 @@ export async function guardarReporte({ tipo, descripcion, datos, personaId }) {
 // ─── Listar reportes guardados ─────────────────────────────────────────────────
 export async function getReportes({ page = 1, limit = 20 } = {}) {
   const from = (page - 1) * limit;
-  const to = from + limit - 1;
+  const to   = from + limit - 1;
 
   const { data, error, count } = await supabase
     .from("reportes")
     .select(
       `Id_Reporte, created_at, Tipo_Reporte, Descripcion,
-       personas ( id, nombre, apellido )`,
+       personas ( id_persona, nombre, apellido )`,   // FK correcto: id_persona
       { count: "exact" }
     )
     .order("created_at", { ascending: false })

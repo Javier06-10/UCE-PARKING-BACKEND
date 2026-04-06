@@ -4,8 +4,9 @@ const env = {
   port: process.env.PORT || 4000,
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
 
-   serialPort: process.env.SERIAL_PORT,
+  serialPort: process.env.SERIAL_PORT,
   serialBaudRate: Number(process.env.SERIAL_BAUDRATE) || 9600,
 };
 

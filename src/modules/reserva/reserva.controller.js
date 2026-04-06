@@ -7,45 +7,39 @@ import { notifyUser, notifyAdmin } from "../../core/notifications.service.js";
 
 export async function create(req, res) {
   try {
-    const { plazaId, fechaInicio, fechaFin } = req.body;
-    const userId = req.user.id; // Asumiendo que verifyToken inyecta req.user
+    const { plazaId, fechaInicio, fechaFin, organizacion_id } = req.body;
+    const userId = req.user.id;
 
     if (!plazaId || !fechaInicio || !fechaFin) {
       return res.status(400).json({ ok: false, error: "plazaId, fechaInicio y fechaFin son requeridos" });
     }
-
-    const start = new Date(fechaInicio);
-    const end = new Date(fechaFin);
-
-    // Validación: la reserva no puede ser en el pasado
-    if (start < new Date()) {
-       return res.status(400).json({ ok: false, error: "La fecha de inicio no puede estar en el pasado." });
+    if (!organizacion_id) {
+      return res.status(400).json({ ok: false, error: "organizacion_id es requerido" });
     }
 
-    // Validación 1: Fecha inicio < Fecha fin
+    const start = new Date(fechaInicio);
+    const end   = new Date(fechaFin);
+
+    if (start < new Date()) {
+      return res.status(400).json({ ok: false, error: "La fecha de inicio no puede estar en el pasado." });
+    }
     if (start >= end) {
       return res.status(400).json({ ok: false, error: "La fecha de inicio debe ser anterior a la fecha de fin" });
     }
-
-    // Validación 2: Máximo 2 horas de reserva
-    const diffMs = end - start;
-    const diffHours = diffMs / (1000 * 60 * 60);
+    const diffHours = (end - start) / (1000 * 60 * 60);
     if (diffHours > 2) {
       return res.status(400).json({ ok: false, error: "Las reservas no pueden durar más de 2 horas." });
     }
 
-    const reserva = await crearReserva(plazaId, userId, start, end);
-    
-    // Notificar al usuario confirmando la reserva
-    notifyUser(userId, "RESERVA_CREADA", {
-       mensaje: "Tu reserva ha sido confirmada exitosamente.",
-       reserva
-    });
+    const reserva = await crearReserva(plazaId, userId, start, end, organizacion_id);
 
-    // Notificar a los admins sobre la nueva reserva
+    notifyUser(userId, "RESERVA_CREADA", {
+      mensaje: "Tu reserva ha sido confirmada exitosamente.",
+      reserva,
+    });
     notifyAdmin("NUEVA_RESERVA", {
       mensaje: `Nueva reserva creada para la plaza ${plazaId}.`,
-      reserva
+      reserva,
     });
 
     return res.status(201).json({ ok: true, reserva });
