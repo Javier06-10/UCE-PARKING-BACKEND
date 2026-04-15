@@ -1,35 +1,36 @@
 import express from "express";
 import { verifyToken } from "../../middlewares/auth.middleware.js";
 import {
-  listNotifications,
-  unreadCount,
-  readAll,
-  readOne,
-  create,
-  remove,
+  listHandler,
+  unreadCountHandler,
+  markOneReadHandler,
+  markAllReadHandler,
+  createHandler,
+  deleteHandler
 } from "./notifications.controller.js";
 
 const router = express.Router();
 
-// Todas las rutas requieren token JWT
+// Todos los endpoints requieren token válido
 router.use(verifyToken);
 
-// GET  /api/notifications                  → lista paginada (personal + generales)
-router.get("/", listNotifications);
+// GET  /api/notifications                → lista paginada (page, limit, soloNoLeidas)
+router.get("/", listHandler);
 
-// GET  /api/notifications/unread-count     → número de no leídas (badge)
-router.get("/unread-count", unreadCount);
+// GET  /api/notifications/unread-count   → cantidad de no leídas
+// ⚠ DEBE ir ANTES de /:id para que "unread-count" no sea interpretado como un id
+router.get("/unread-count", unreadCountHandler);
 
-// PATCH /api/notifications/read-all        → marcar TODAS como leídas
-router.patch("/read-all", readAll);
+// PATCH /api/notifications/read-all      → marcar todas como leídas
+router.patch("/read-all", markAllReadHandler);
 
-// PATCH /api/notifications/:id/read        → marcar UNA como leída
-router.patch("/:id/read", readOne);
+// PATCH /api/notifications/:id/read      → marcar una como leída
+router.patch("/:id/read", markOneReadHandler);
 
-// POST  /api/notifications                 → crear notificación (uso interno / admin)
-router.post("/", create);
+// POST  /api/notifications               → crear notificación (uso admin/interno)
+router.post("/", createHandler);
 
-// DELETE /api/notifications/:id            → eliminar una notificación
-router.delete("/:id", remove);
+// DELETE /api/notifications/:id          → eliminar notificación
+router.delete("/:id", deleteHandler);
 
 export default router;

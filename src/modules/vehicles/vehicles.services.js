@@ -1,17 +1,18 @@
 import supabase from "../../config/supabase.js";
 
-// ─── Resolvers: texto → ID (usados como fallback si el cliente sólo envía nombre) ──
+// ─── Resolvers: texto → ID ─────────────────────────────────────────────────────
+// marca y modelo usan campo 'tipo' para distinguir vehiculo vs equipo
 
 async function getMarcaId(nombre) {
   if (!nombre) return null;
   let { data } = await supabase
-    .from("marcas_vehiculo")
+    .from("marca")
     .select("id_marca")
     .ilike("nombre", nombre)
     .maybeSingle();
   if (data) return data.id_marca;
   const { data: nueva, error } = await supabase
-    .from("marcas_vehiculo")
+    .from("marca")
     .insert({ nombre: nombre.toUpperCase() })
     .select("id_marca")
     .single();
@@ -22,14 +23,14 @@ async function getMarcaId(nombre) {
 async function getModeloId(nombre, id_marca) {
   if (!nombre || !id_marca) return null;
   let { data } = await supabase
-    .from("modelos_vehiculo")
+    .from("modelo")
     .select("id_modelo")
     .ilike("nombre", nombre)
     .eq("id_marca", id_marca)
     .maybeSingle();
   if (data) return data.id_modelo;
   const { data: nueva, error } = await supabase
-    .from("modelos_vehiculo")
+    .from("modelo")
     .insert({ nombre: nombre.toUpperCase(), id_marca })
     .select("id_modelo")
     .single();
@@ -40,13 +41,13 @@ async function getModeloId(nombre, id_marca) {
 async function getColorId(nombre) {
   if (!nombre) return null;
   let { data } = await supabase
-    .from("colores_vehiculo")
+    .from("color")
     .select("id_color")
     .ilike("nombre", nombre)
     .maybeSingle();
   if (data) return data.id_color;
   const { data: nueva, error } = await supabase
-    .from("colores_vehiculo")
+    .from("color")
     .insert({ nombre: nombre.toUpperCase() })
     .select("id_color")
     .single();
@@ -56,11 +57,13 @@ async function getColorId(nombre) {
 
 // ─── Select base con JOINs de catálogos ───────────────────────────────────────
 const VEHICLE_SELECT = `
-  id_vehiculo, placa, id_marca, id_color, id_modelo, Fecha_Registro, id_persona,
-  personas ( id_persona, nombre, apellido, email, telefono ),
-  marcas_vehiculo ( id_marca, nombre ),
-  modelos_vehiculo ( id_modelo, nombre ),
-  colores_vehiculo ( id_color, nombre )
+  id_vehiculo, placa, id_color, id_modelo, created_at, id_persona,
+  persona ( id_persona, nombre, apellido, email, telefono ),
+  modelo ( 
+    id_modelo, nombre,
+    marca ( id_marca, nombre )
+  ),
+  color ( id_color, nombre )
 `;
 
 // ─── Listar todos los vehículos ────────────────────────────────────────────────
@@ -69,9 +72,9 @@ export async function getAllVehicles({ page = 1, limit = 20, search = "", person
   const to   = from + limit - 1;
 
   let query = supabase
-    .from("vehiculos")
+    .from("vehiculo")
     .select(VEHICLE_SELECT, { count: "exact" })
-    .order("Fecha_Registro", { ascending: false })
+    .order("created_at", { ascending: false })
     .range(from, to);
 
   if (search)     query = query.or(`placa.ilike.%${search}%`);
@@ -83,10 +86,10 @@ export async function getAllVehicles({ page = 1, limit = 20, search = "", person
   return { data, total: count, page, limit };
 }
 
-// ─── Obtener un vehículo por ID (PK: id_vehiculo) ─────────────────────────────
+// ─── Obtener un vehículo por ID ────────────────────────────────────────────────
 export async function getVehicleById(id) {
   const { data, error } = await supabase
-    .from("vehiculos")
+    .from("vehiculo")
     .select(VEHICLE_SELECT)
     .eq("id_vehiculo", id)
     .single();
@@ -98,7 +101,7 @@ export async function getVehicleById(id) {
 // ─── Obtener vehículo por placa ────────────────────────────────────────────────
 export async function getVehicleByPlaca(placa) {
   const { data, error } = await supabase
-    .from("vehiculos")
+    .from("vehiculo")
     .select(VEHICLE_SELECT)
     .eq("placa", placa)
     .maybeSingle();
@@ -108,22 +111,19 @@ export async function getVehicleByPlaca(placa) {
 }
 
 // ─── Crear vehículo ────────────────────────────────────────────────────────────
-// Acepta IDs directamente (id_marca, id_modelo, id_color) o nombres como fallback.
-// Los usuarios del panel envían IDs; los de la app móvil también.
 export async function createVehicle({ placa, id_marca, id_modelo, id_color, persona_id, Marca, Color, modelo }) {
   if (!placa) throw new Error("La placa es requerida");
 
   const existe = await getVehicleByPlaca(placa);
   if (existe) throw new Error(`Ya existe un vehículo con la placa ${placa}`);
 
-  // Preferir IDs directos; resolver desde nombre sólo si no se proporcionaron IDs
-  const marcaId  = id_marca  ?? (Marca  ? await getMarcaId(Marca)                    : null);
-  const modeloId = id_modelo ?? (modelo ? await getModeloId(modelo, marcaId)          : null);
-  const colorId  = id_color  ?? (Color  ? await getColorId(Color)                     : null);
+  const marcaId  = id_marca  ?? (Marca  ? await getMarcaId(Marca)                 : null);
+  const modeloId = id_modelo ?? (modelo ? await getModeloId(modelo, marcaId)       : null);
+  const colorId  = id_color  ?? (Color  ? await getColorId(Color)                  : null);
 
   const { data, error } = await supabase
-    .from("vehiculos")
-    .insert({ placa, id_marca: marcaId, id_color: colorId, id_modelo: modeloId, id_persona: persona_id })
+    .from("vehiculo")
+    .insert({ placa, id_color: colorId, id_modelo: modeloId, id_persona: persona_id })
     .select(VEHICLE_SELECT)
     .single();
 
@@ -144,18 +144,18 @@ export async function updateVehicle(id, { placa, id_marca, id_modelo, id_color, 
   if (placa      !== undefined) campos.placa      = placa;
   if (persona_id !== undefined) campos.id_persona = persona_id;
 
-  // Preferir ID directo; resolver nombre sólo si ID no fue enviado
-  if (id_marca  !== undefined) campos.id_marca  = id_marca;
-  else if (Marca !== undefined) campos.id_marca  = await getMarcaId(Marca);
 
   if (id_modelo !== undefined) campos.id_modelo = id_modelo;
-  else if (modelo !== undefined) campos.id_modelo = await getModeloId(modelo, campos.id_marca);
+  else if (modelo !== undefined) {
+    const mId = id_marca ?? (Marca ? await getMarcaId(Marca) : null);
+    campos.id_modelo = await getModeloId(modelo, mId);
+  }
 
   if (id_color  !== undefined) campos.id_color  = id_color;
   else if (Color !== undefined) campos.id_color  = await getColorId(Color);
 
   const { data, error } = await supabase
-    .from("vehiculos")
+    .from("vehiculo")
     .update(campos)
     .eq("id_vehiculo", id)
     .select(VEHICLE_SELECT)
@@ -168,7 +168,7 @@ export async function updateVehicle(id, { placa, id_marca, id_modelo, id_color, 
 // ─── Eliminar vehículo ─────────────────────────────────────────────────────────
 export async function deleteVehicle(id) {
   const { error } = await supabase
-    .from("vehiculos")
+    .from("vehiculo")
     .delete()
     .eq("id_vehiculo", id);
 
@@ -179,12 +179,12 @@ export async function deleteVehicle(id) {
 // ─── Historial de accesos de un vehículo ──────────────────────────────────────
 export async function getVehicleAccessHistory(id) {
   const { data, error } = await supabase
-    .from("registros_acceso")
+    .from("acceso")
     .select(
-      `id_registro, entrada_at, salida_at, Id_Plaza,
-       tipo_evento:id_tipo_evento ( id_tipo, nombre_tipo ),
-       dispositivos_entrada:id_dispositivo_entrada ( id_dispositivo, ubicacion ),
-       dispositivos_salida:id_dispositivo_salida   ( id_dispositivo, ubicacion )`
+      `id_registro, entrada_at, salida_at, id_plaza,
+       tipo_evento:id_tipo_evento ( id_tipo, nombre ),
+       dispositivo_entrada:id_dispositivo_entrada ( id_dispositivo, ubicacion ),
+       dispositivo_salida:id_dispositivo_salida   ( id_dispositivo, ubicacion )`
     )
     .eq("id_vehiculo", id)
     .order("entrada_at", { ascending: false });

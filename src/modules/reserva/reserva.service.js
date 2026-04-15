@@ -1,27 +1,27 @@
 import supabase from "../../config/supabase.js";
 
-// ─── Helper: obtiene el id_estado de estado_reserva por nombre ───────────────
+// ─── Helper: id de estado para reservas (tabla global con contexto) ───────────
 async function getEstadoReservaId(nombre) {
   const { data } = await supabase
     .from("estado_reserva")
     .select("id_estado")
-    .ilike("nombre_estado", nombre)
+    .ilike("nombre", nombre)
     .maybeSingle();
   if (!data) throw new Error(`Estado de reserva '${nombre}' no encontrado en el catálogo`);
   return data.id_estado;
 }
 
-// ─── Helper: reserva activa en una plaza (usa id_estado FK) ──────────────────
+// ─── Helper: reserva activa en una plaza ──────────────────────────────────────
 export async function getReservaActiva(plazaId) {
   const ID_ACTIVA = await getEstadoReservaId("Activa");
 
   const { data, error } = await supabase
-    .from("RESERVA")
+    .from("reserva")
     .select("*")
-    .eq("Id_Plaza", plazaId)
+    .eq("id_plaza", plazaId)
     .eq("id_estado", ID_ACTIVA)
-    .lte("Fecha_Hora_Inicio", new Date().toISOString())
-    .gte("Fecha_Hora_Fin", new Date().toISOString())
+    .lte("fecha_hora_inicio", new Date().toISOString())
+    .gte("fecha_hora_fin", new Date().toISOString())
     .maybeSingle();
 
   if (error) return null;
@@ -29,14 +29,11 @@ export async function getReservaActiva(plazaId) {
 }
 
 // ─── Crear reserva ────────────────────────────────────────────────────────────
-// userId         = auth.users.id (UUID)
-// organizacion_id = FK de la org del parqueo donde se reserva (requerido por RLS)
 export async function crearReserva(plazaId, userId, start, end, organizacion_id) {
   if (!organizacion_id) throw new Error("organizacion_id es requerido para crear una reserva");
 
-  // 1. Resolver persona_id desde auth.users.id → public.usuarios.id_persona
   const { data: usuarioRow, error: userError } = await supabase
-    .from("usuarios")
+    .from("usuario")
     .select("id_persona")
     .eq("id", userId)
     .maybeSingle();
@@ -46,16 +43,15 @@ export async function crearReserva(plazaId, userId, start, end, organizacion_id)
   }
   const personaId = usuarioRow.id_persona;
 
-  // 2. Verificar solapamiento de reservas en esa plaza
   const ID_ACTIVA = await getEstadoReservaId("Activa");
 
   const { data: overlapping, error: checkError } = await supabase
-    .from("RESERVA")
-    .select("Id_Reserva")
-    .eq("Id_Plaza", plazaId)
+    .from("reserva")
+    .select("id_reserva")
+    .eq("id_plaza", plazaId)
     .eq("id_estado", ID_ACTIVA)
-    .lt("Fecha_Hora_Inicio", end.toISOString())
-    .gt("Fecha_Hora_Fin", start.toISOString());
+    .lt("fecha_hora_inicio", end.toISOString())
+    .gt("fecha_hora_fin", start.toISOString());
 
   if (checkError) {
     throw new Error("Error verificando disponibilidad de la plaza: " + checkError.message);
@@ -64,14 +60,13 @@ export async function crearReserva(plazaId, userId, start, end, organizacion_id)
     throw new Error("La plaza ya está reservada en ese horario.");
   }
 
-  // 3. Insertar reserva con id_estado FK y organizacion_id
   const { data, error } = await supabase
-    .from("RESERVA")
+    .from("reserva")
     .insert({
-      Id_Plaza:          plazaId,
+      id_plaza:          plazaId,
       id_persona:        personaId,
-      Fecha_Hora_Inicio: start.toISOString(),
-      Fecha_Hora_Fin:    end.toISOString(),
+      fecha_hora_inicio: start.toISOString(),
+      fecha_hora_fin:    end.toISOString(),
       id_estado:         ID_ACTIVA,
       organizacion_id,
     })
@@ -85,7 +80,7 @@ export async function crearReserva(plazaId, userId, start, end, organizacion_id)
 // ─── Listar reservas del usuario ──────────────────────────────────────────────
 export async function listarReservasUser(userId) {
   const { data: usuarioRow, error: userError } = await supabase
-    .from("usuarios")
+    .from("usuario")
     .select("id_persona")
     .eq("id", userId)
     .maybeSingle();
@@ -95,23 +90,23 @@ export async function listarReservasUser(userId) {
   }
 
   const { data, error } = await supabase
-    .from("RESERVA")
+    .from("reserva")
     .select(`
-      Id_Reserva,
-      Fecha_Hora_Inicio,
-      Fecha_Hora_Fin,
+      id_reserva,
+      fecha_hora_inicio,
+      fecha_hora_fin,
       id_estado,
       created_at,
-      Id_Plaza,
-      estado_reserva ( id_estado, nombre_estado ),
-      plazas (
-        Id_Plaza,
-        Numero_Plaza,
-        zonas_estacionamiento ( Id_Zona, Nombre_Zona )
+      id_plaza,
+      estado:id_estado ( id_estado, nombre ),
+      plaza (
+        id_plaza,
+        numero_plaza,
+        zona ( id_zona, nombre )
       )
     `)
     .eq("id_persona", usuarioRow.id_persona)
-    .order("Fecha_Hora_Inicio", { ascending: false });
+    .order("fecha_hora_inicio", { ascending: false });
 
   if (error) throw new Error("Error al listar reservas: " + error.message);
   return data || [];
@@ -120,7 +115,7 @@ export async function listarReservasUser(userId) {
 // ─── Cancelar reserva ─────────────────────────────────────────────────────────
 export async function cancelarReserva(reservaId, userId) {
   const { data: usuarioRow, error: userError } = await supabase
-    .from("usuarios")
+    .from("usuario")
     .select("id_persona")
     .eq("id", userId)
     .maybeSingle();
@@ -129,15 +124,15 @@ export async function cancelarReserva(reservaId, userId) {
     throw new Error("No se encontró el perfil del usuario.");
   }
 
-  const ID_ACTIVA      = await getEstadoReservaId("Activa");
-  const ID_CANCELADA   = await getEstadoReservaId("Cancelada");
+  const ID_ACTIVA    = await getEstadoReservaId("Activa");
+  const ID_CANCELADA = await getEstadoReservaId("Cancelada");
 
   const { data, error } = await supabase
-    .from("RESERVA")
+    .from("reserva")
     .update({ id_estado: ID_CANCELADA })
-    .eq("Id_Reserva", reservaId)
+    .eq("id_reserva", reservaId)
     .eq("id_persona", usuarioRow.id_persona)
-    .eq("id_estado", ID_ACTIVA)         // Solo si está activa
+    .eq("id_estado", ID_ACTIVA)
     .select()
     .single();
 

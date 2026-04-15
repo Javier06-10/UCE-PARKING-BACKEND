@@ -1,116 +1,87 @@
 import supabase from "../../config/supabase.js";
 
-// ─── Tipos de distribución ────────────────────────────────────────────────────
-// General  → id_persona IS NULL  → se emite al canal "general" (todos los clientes)
-// Personal → id_persona = UUID   → se emite al room "user:<id_persona>"
-
-/**
- * Crea una notificación en BD y la emite por Socket.IO.
- *
- * @param {object} opts
- * @param {string}      opts.contenido       - Texto de la notificación.
- * @param {string|null} opts.id_persona      - UUID del destinatario o null para general.
- * @param {number|null} opts.id_tipo         - FK a tipo_notificacion (opcional).
- * @param {number|null} opts.organizacion_id - FK org (requerido por RLS con service_role).
- * @returns {Promise<object>} Notificación persistida.
- */
-export async function createNotification({ contenido, id_persona = null, id_tipo = null, organizacion_id = null }) {
-  if (!contenido) throw new Error("El campo 'contenido' es requerido");
-
-  // 1. Persistir en BD
-  // Nota: la tabla notificaciones NO tiene columna 'Tipo' — sólo usa id_tipo FK
+// ─── Resolver id_persona desde auth uid ───────────────────────────────────────
+// El middleware verifyToken inyecta req.user = { id: auth_uid, ... }
+// Este helper convierte ese id al id_persona de public.usuario
+async function resolvePersonaId(userId) {
   const { data, error } = await supabase
-    .from("notificaciones")
-    .insert({ Contenido: contenido, Leida: false, id_persona, id_tipo, organizacion_id })
-    .select()
-    .single();
+    .from("usuario")          // tabla normalizada (singular)
+    .select("id_persona")
+    .eq("id", userId)
+    .maybeSingle();
 
-  if (error) throw error;
-
-  // 2. Distribuir en tiempo real vía Socket.IO
-  if (global.io) {
-    const payload = {
-      id:         data.ID_Notificacion,
-      contenido:  data.Contenido,
-      leida:      data.Leida,
-      created_at: data.created_at,
-      id_persona: data.id_persona,
-    };
-
-    if (id_persona) {
-      global.io.to(`user:${id_persona}`).emit("notificacion", payload);
-    } else {
-      global.io.emit("notificacion:general", payload);
-    }
+  if (error || !data) {
+    throw new Error("id_persona es requerido");
   }
 
-  return data;
+  return data.id_persona;
 }
 
-// ─── Listar notificaciones para un usuario ────────────────────────────────────
-export async function getNotificationsForUser({
-  id_persona,
-  page  = 1,
-  limit = 20,
-  soloNoLeidas = false,
-} = {}) {
-  if (!id_persona) throw new Error("id_persona es requerido");
+// ─── Listar notificaciones del usuario ────────────────────────────────────────
+// Devuelve las notificaciones del usuario (id_persona) + las generales (id_persona IS NULL)
+// Query params: page, limit, soloNoLeidas
+export async function listNotifications({ userId, page = 1, limit = 20, soloNoLeidas = false }) {
+  const personaId = await resolvePersonaId(userId);
 
   const from = (page - 1) * limit;
   const to   = from + limit - 1;
 
   let query = supabase
-    .from("notificaciones")
+    .from("notificacion")
     .select(
-      `ID_Notificacion, created_at, Contenido, Leida, id_persona, id_tipo,
-       tipo_notificacion:id_tipo ( id_tipo, nombre_tipo )`,
+      `id_notificacion, contenido, leida, created_at, id_persona, id_tipo, organizacion_id,
+       tipo:id_tipo ( id_tipo, nombre )`,
       { count: "exact" }
     )
-    .or(`id_persona.eq.${id_persona},id_persona.is.null`)
+    .or(`id_persona.eq.${personaId},id_persona.is.null`)  // personales + generales
     .order("created_at", { ascending: false })
     .range(from, to);
 
-  if (soloNoLeidas) query = query.eq("Leida", false);
+  if (soloNoLeidas) {
+    query = query.eq("leida", false);
+  }
 
   const { data, error, count } = await query;
   if (error) throw error;
 
-  return { data, total: count, page, limit };
+  return { data: data || [], total: count || 0, page, limit };
 }
 
-// ─── Contar no leídas (badge) ─────────────────────────────────────────────────
-export async function getUnreadCount(id_persona) {
-  if (!id_persona) throw new Error("id_persona es requerido");
+// ─── Contar no leídas ─────────────────────────────────────────────────────────
+export async function countUnread(userId) {
+  const personaId = await resolvePersonaId(userId);
 
   const { count, error } = await supabase
-    .from("notificaciones")
-    .select("*", { count: "exact", head: true })
-    .or(`id_persona.eq.${id_persona},id_persona.is.null`)
-    .eq("Leida", false);
+    .from("notificacion")
+    .select("id_notificacion", { count: "exact", head: true })
+    .or(`id_persona.eq.${personaId},id_persona.is.null`)
+    .eq("leida", false);
 
   if (error) throw error;
-  return count ?? 0;
+  return count || 0;
 }
 
-// ─── Marcar una notificación como leída ───────────────────────────────────────
-export async function markAsRead(id, id_persona) {
-  const { data: notif, error: fetchErr } = await supabase
-    .from("notificaciones")
-    .select("ID_Notificacion, id_persona")
-    .eq("ID_Notificacion", id)
-    .single();
+// ─── Marcar una como leída ────────────────────────────────────────────────────
+export async function markOneAsRead(notifId, userId) {
+  const personaId = await resolvePersonaId(userId);
 
-  if (fetchErr) throw fetchErr;
-  if (!notif)   throw new Error("Notificación no encontrada");
+  // Verificar que pertenece al usuario o es general
+  const { data: notif, error: fetchError } = await supabase
+    .from("notificacion")
+    .select("id_notificacion, id_persona")
+    .eq("id_notificacion", notifId)
+    .maybeSingle();
 
-  if (notif.id_persona !== null && notif.id_persona !== id_persona) {
+  if (fetchError || !notif) throw new Error("Notificación no encontrada");
+
+  if (notif.id_persona !== null && notif.id_persona !== personaId) {
     throw new Error("No tienes permiso para marcar esta notificación");
   }
 
   const { data, error } = await supabase
-    .from("notificaciones")
-    .update({ Leida: true })
-    .eq("ID_Notificacion", id)
+    .from("notificacion")
+    .update({ leida: true })
+    .eq("id_notificacion", notifId)
     .select()
     .single();
 
@@ -119,39 +90,73 @@ export async function markAsRead(id, id_persona) {
 }
 
 // ─── Marcar todas como leídas ─────────────────────────────────────────────────
-export async function markAllAsRead(id_persona) {
-  if (!id_persona) throw new Error("id_persona es requerido");
+export async function markAllAsRead(userId) {
+  const personaId = await resolvePersonaId(userId);
 
   const { error } = await supabase
-    .from("notificaciones")
-    .update({ Leida: true })
-    .or(`id_persona.eq.${id_persona},id_persona.is.null`)
-    .eq("Leida", false);
+    .from("notificacion")
+    .update({ leida: true })
+    .or(`id_persona.eq.${personaId},id_persona.is.null`)
+    .eq("leida", false);
 
   if (error) throw error;
   return { ok: true };
 }
 
-// ─── Eliminar una notificación ────────────────────────────────────────────────
-export async function deleteNotification(id, id_persona) {
-  const { data: notif, error: fetchErr } = await supabase
-    .from("notificaciones")
-    .select("ID_Notificacion, id_persona")
-    .eq("ID_Notificacion", id)
+// ─── Crear notificación (uso interno/admin) ───────────────────────────────────
+export async function createNotification({ contenido, id_persona, id_tipo, organizacion_id }) {
+  if (!contenido) throw new Error("contenido es requerido");
+
+  const { data, error } = await supabase
+    .from("notificacion")
+    .insert({
+      contenido,
+      id_persona:      id_persona      || null,
+      id_tipo:         id_tipo         || null,
+      organizacion_id: organizacion_id || null,
+      leida: false
+    })
+    .select()
     .single();
 
-  if (fetchErr) throw fetchErr;
-  if (!notif)   throw new Error("Notificación no encontrada");
+  if (error) throw error;
 
-  if (notif.id_persona !== null && notif.id_persona !== id_persona) {
+  // Emitir por Socket.IO en tiempo real
+  if (global.io) {
+    if (id_persona) {
+      // Notificación personal → sala del usuario
+      global.io.to(`user:${id_persona}`).emit("notificacion", data);
+    } else {
+      // Notificación general → todos
+      global.io.emit("notificacion:general", data);
+    }
+  }
+
+  return data;
+}
+
+// ─── Eliminar notificación ────────────────────────────────────────────────────
+export async function deleteNotification(notifId, userId) {
+  const personaId = await resolvePersonaId(userId);
+
+  // Verificar propiedad
+  const { data: notif, error: fetchError } = await supabase
+    .from("notificacion")
+    .select("id_notificacion, id_persona")
+    .eq("id_notificacion", notifId)
+    .maybeSingle();
+
+  if (fetchError || !notif) throw new Error("Notificación no encontrada");
+
+  if (notif.id_persona !== null && notif.id_persona !== personaId) {
     throw new Error("No tienes permiso para eliminar esta notificación");
   }
 
   const { error } = await supabase
-    .from("notificaciones")
+    .from("notificacion")
     .delete()
-    .eq("ID_Notificacion", id);
+    .eq("id_notificacion", notifId);
 
   if (error) throw error;
-  return { deleted: true, id };
+  return { deleted: true, id: notifId };
 }

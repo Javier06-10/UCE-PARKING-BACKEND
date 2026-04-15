@@ -1,100 +1,84 @@
 import {
-  createNotification,
-  getNotificationsForUser,
-  getUnreadCount,
-  markAsRead,
+  listNotifications,
+  countUnread,
+  markOneAsRead,
   markAllAsRead,
-  deleteNotification,
+  createNotification,
+  deleteNotification
 } from "./notifications.service.js";
 
-// ─── GET /api/notifications ───────────────────────────────────────────────────
-export async function listNotifications(req, res) {
+// GET /api/notifications?page=1&limit=20&soloNoLeidas=true
+export async function listHandler(req, res) {
   try {
-    const persona_id = req.user?.id;
-    if (!persona_id) return res.status(401).json({ ok: false, error: "No autenticado" });
-
     const { page = 1, limit = 20, soloNoLeidas } = req.query;
+    const userId = req.user.id;
 
-    const result = await getNotificationsForUser({
-      persona_id,
+    const result = await listNotifications({
+      userId,
       page:         Number(page),
       limit:        Number(limit),
-      soloNoLeidas: soloNoLeidas === "true",
+      soloNoLeidas: soloNoLeidas === "true"
     });
 
     res.json({ ok: true, ...result });
-  } catch (err) {
-    console.error("[notifications] listNotifications:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
+  } catch (error) {
+    console.error("[notifications] listNotifications:", error.message);
+    res.status(500).json({ ok: false, error: error.message });
   }
 }
 
-// ─── GET /api/notifications/unread-count ─────────────────────────────────────
-export async function unreadCount(req, res) {
+// GET /api/notifications/unread-count
+export async function unreadCountHandler(req, res) {
   try {
-    const persona_id = req.user?.id;
-    if (!persona_id) return res.status(401).json({ ok: false, error: "No autenticado" });
-
-    const count = await getUnreadCount(persona_id);
+    const count = await countUnread(req.user.id);
     res.json({ ok: true, count });
-  } catch (err) {
-    console.error("[notifications] unreadCount:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
+  } catch (error) {
+    console.error("[notifications] unreadCount:", error.message);
+    res.status(500).json({ ok: false, error: error.message });
   }
 }
 
-// ─── PATCH /api/notifications/read-all ───────────────────────────────────────
-export async function readAll(req, res) {
+// PATCH /api/notifications/:id/read
+export async function markOneReadHandler(req, res) {
   try {
-    const persona_id = req.user?.id;
-    if (!persona_id) return res.status(401).json({ ok: false, error: "No autenticado" });
-
-    await markAllAsRead(persona_id);
-    res.json({ ok: true, message: "Todas las notificaciones marcadas como leídas" });
-  } catch (err) {
-    console.error("[notifications] readAll:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-}
-
-// ─── PATCH /api/notifications/:id/read ───────────────────────────────────────
-export async function readOne(req, res) {
-  try {
-    const persona_id = req.user?.id;
-    if (!persona_id) return res.status(401).json({ ok: false, error: "No autenticado" });
-
-    const data = await markAsRead(req.params.id, persona_id);
+    const data = await markOneAsRead(Number(req.params.id), req.user.id);
     res.json({ ok: true, data });
-  } catch (err) {
-    console.error("[notifications] readOne:", err.message);
-    const status = err.message.includes("permiso") ? 403 : 500;
-    res.status(status).json({ ok: false, error: err.message });
+  } catch (error) {
+    console.error("[notifications] markOneRead:", error.message);
+    res.status(400).json({ ok: false, error: error.message });
   }
 }
 
-// ─── POST /api/notifications (crear notificación manual — admin) ──────────────
-export async function create(req, res) {
+// PATCH /api/notifications/read-all
+export async function markAllReadHandler(req, res) {
   try {
-    const { tipo, contenido, persona_id, id_tipo } = req.body;
-    const data = await createNotification({ tipo, contenido, persona_id, id_tipo });
+    await markAllAsRead(req.user.id);
+    res.json({ ok: true, message: "Todas las notificaciones marcadas como leídas" });
+  } catch (error) {
+    console.error("[notifications] markAllRead:", error.message);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+// POST /api/notifications
+export async function createHandler(req, res) {
+  try {
+    const { contenido, id_persona, id_tipo, organizacion_id } = req.body;
+    const data = await createNotification({ contenido, id_persona, id_tipo, organizacion_id });
     res.status(201).json({ ok: true, data });
-  } catch (err) {
-    console.error("[notifications] create:", err.message);
-    res.status(400).json({ ok: false, error: err.message });
+  } catch (error) {
+    console.error("[notifications] create:", error.message);
+    res.status(400).json({ ok: false, error: error.message });
   }
 }
 
-// ─── DELETE /api/notifications/:id ───────────────────────────────────────────
-export async function remove(req, res) {
+// DELETE /api/notifications/:id
+export async function deleteHandler(req, res) {
   try {
-    const persona_id = req.user?.id;
-    if (!persona_id) return res.status(401).json({ ok: false, error: "No autenticado" });
-
-    const result = await deleteNotification(req.params.id, persona_id);
+    const result = await deleteNotification(Number(req.params.id), req.user.id);
     res.json({ ok: true, ...result });
-  } catch (err) {
-    console.error("[notifications] remove:", err.message);
-    const status = err.message.includes("permiso") ? 403 : 500;
-    res.status(status).json({ ok: false, error: err.message });
+  } catch (error) {
+    console.error("[notifications] delete:", error.message);
+    res.status(400).json({ ok: false, error: error.message });
   }
 }

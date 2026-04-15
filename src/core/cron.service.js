@@ -8,27 +8,28 @@ export function initCronJobs() {
     try {
       const now = new Date().toISOString();
 
-      // Obtener ids de estado desde el catálogo (usando FK, no texto libre)
+      // Obtener ids de estado desde el catálogo global, contexto='reserva'
       const { data: estados } = await supabase
-        .from('estado_reserva')
-        .select('id_estado, nombre_estado');
+        .from('estado')
+        .select('id, nombre')
+        .eq('contexto', 'reserva');
 
-      const ID_ACTIVA  = estados?.find(e => e.nombre_estado === 'Activa')?.id_estado;
+      const ID_ACTIVA  = estados?.find(e => e.nombre === 'Activa')?.id;
       const ID_VENCIDA = estados?.find(
-        e => e.nombre_estado === 'Vencida' || e.nombre_estado === 'Expirada'
-      )?.id_estado;
+        e => e.nombre === 'Vencida' || e.nombre === 'Expirada'
+      )?.id;
 
       if (!ID_ACTIVA || !ID_VENCIDA) {
         console.error('[cron] No se encontraron los estados de reserva en el catálogo.');
         return;
       }
 
-      // Buscar reservas activas cuya Fecha_Hora_Fin ya pasó
+      // Buscar reservas activas cuya fecha_hora_fin ya pasó
       const { data: expiradas, error } = await supabase
-        .from('RESERVA')
-        .select('Id_Reserva, id_persona, Id_Plaza')
+        .from('reserva')
+        .select('id_reserva, id_persona, id_plaza')
         .eq('id_estado', ID_ACTIVA)
-        .lt('Fecha_Hora_Fin', now);
+        .lt('fecha_hora_fin', now);
 
       if (error) {
         console.error('[cron] Error buscando reservas expiradas:', error.message);
@@ -38,18 +39,17 @@ export function initCronJobs() {
       if (expiradas && expiradas.length > 0) {
         for (const reserva of expiradas) {
           const { error: updError } = await supabase
-            .from('RESERVA')
+            .from('reserva')
             .update({ id_estado: ID_VENCIDA })
-            .eq('Id_Reserva', reserva.Id_Reserva);
+            .eq('id_reserva', reserva.id_reserva);
 
           if (!updError) {
-            console.log(`[cron] Reserva ${reserva.Id_Reserva} expirada automáticamente.`);
+            console.log(`[cron] Reserva ${reserva.id_reserva} expirada automáticamente.`);
 
-            // Notificar al usuario — campo correcto: id_persona (UUID)
             notifyUser(reserva.id_persona, 'RESERVA_EXPIRADA', {
-              mensaje: 'Tu reserva ha alcanzado su límite de tiempo y ha sido cancelada.',
-              reservaId: reserva.Id_Reserva,
-              plazaId:   reserva.Id_Plaza,
+              mensaje:  'Tu reserva ha alcanzado su límite de tiempo y ha sido cancelada.',
+              reservaId: reserva.id_reserva,
+              plazaId:   reserva.id_plaza,
             });
           }
         }

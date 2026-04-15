@@ -20,10 +20,13 @@ export const initSerial = async () => {
 
   // Fetch catalog
   try {
-    const { data: estados } = await supabase.from('estado_plaza').select('id_estado, nombre_estado');
+    const { data: estados } = await supabase
+      .from('estado')
+      .select('id, nombre')
+      .eq('contexto', 'plaza');
     estadosCatalog = estados || [];
   } catch(e) {
-    console.error("Error fetching estado_plaza catalog for serial init", e);
+    console.error("Error fetching estado catalog (plaza) for serial init", e);
   }
 
   port = new SerialPort({
@@ -106,8 +109,8 @@ function handlePlazaUpdate(plazas) {
 
   console.log("🅿️ Cambio detectado en plazas:", plazas.map(p => `${p.id}:${p.occupied ? "⬛" : "⬜"}`).join(" "));
 
-  const ESTADO_OCUPADA = estadosCatalog.find(e => e.nombre_estado === 'Ocupada')?.id_estado || 2;
-  const ESTADO_LIBRE = estadosCatalog.find(e => e.nombre_estado === 'Libre')?.id_estado || 1;
+  const ESTADO_OCUPADA = estadosCatalog.find(e => e.nombre === 'Ocupada')?.id || 2;
+  const ESTADO_LIBRE   = estadosCatalog.find(e => e.nombre === 'Libre')?.id   || 1;
 
   // Actualizar BD
   updatePlazas(plazas, ESTADO_OCUPADA, ESTADO_LIBRE);

@@ -1,43 +1,43 @@
 import supabase from "../../config/supabase.js";
 import QRCode from "qrcode";
 
-// ─── Helper: id_estado de estado_ticket ────────────────────────────────────────
+// ─── Helper: id de estado para tickets (tabla global con contexto) ──────────────
 async function getEstadoTicketId(nombre) {
   const { data } = await supabase
     .from("estado_ticket")
     .select("id_estado")
-    .ilike("nombre_estado", nombre)
+    .ilike("nombre", nombre)
     .maybeSingle();
   return data?.id_estado || 1;
 }
 
 // ─── Listar tickets con paginación y filtros ───────────────────────────────────
-// RLS filtra por organizacion_id automáticamente cuando el cliente usa JWT.
-// Con service_role (backend) el filtro es manual a través del endpoint.
 export async function getAllTickets({ page = 1, limit = 20, estado, search } = {}) {
   const from = (page - 1) * limit;
   const to   = from + limit - 1;
 
   let query = supabase
-    .from("tickets")
+    .from("ticket")
     .select(
-      `Id_Ticket, Placa_Capturada, Fecha_Hora_Emision, Fecha_Hora_Vencimiento,
-       id_estado, id_visitante, id_vehiculo, Id_Plaza_Asignada, qr_token, id_persona,
-       estado_ticket ( id_estado, nombre_estado ),
-       personas ( id_persona, nombre, apellido ),
-       vehiculos (
+      `id_ticket, placa_capturada, fecha_hora_emision, fecha_hora_vencimiento,
+       id_estado, id_visitante, id_vehiculo, id_plaza_asignada, qr_token, id_persona,
+       estado:id_estado ( id_estado, nombre ),
+       persona ( id_persona, nombre, apellido ),
+       vehiculo (
          id_vehiculo, placa,
-         marcas_vehiculo ( id_marca, nombre ),
-         modelos_vehiculo ( id_modelo, nombre ),
-         colores_vehiculo ( id_color, nombre )
+         color ( id_color, nombre ),
+         modelo ( 
+           id_modelo, nombre,
+           marca ( id_marca, nombre )
+         )
        )`,
       { count: "exact" }
     )
-    .order("Fecha_Hora_Emision", { ascending: false })
+    .order("fecha_hora_emision", { ascending: false })
     .range(from, to);
 
   if (estado) query = query.eq("id_estado", estado);
-  if (search) query = query.ilike("Placa_Capturada", `%${search}%`);
+  if (search) query = query.ilike("placa_capturada", `%${search}%`);
 
   const { data, error, count } = await query;
   if (error) throw error;
@@ -48,20 +48,20 @@ export async function getAllTickets({ page = 1, limit = 20, estado, search } = {
 // ─── Obtener ticket por ID ─────────────────────────────────────────────────────
 export async function getTicketById(id) {
   const { data, error } = await supabase
-    .from("tickets")
+    .from("ticket")
     .select(
-      `Id_Ticket, Placa_Capturada, Fecha_Hora_Emision, Fecha_Hora_Vencimiento,
-       id_estado, id_visitante, id_vehiculo, Id_Plaza_Asignada, qr_token, id_persona,
-       estado_ticket ( id_estado, nombre_estado ),
-       personas ( id_persona, nombre, apellido ),
-       vehiculos (
+      `id_ticket, placa_capturada, fecha_hora_emision, fecha_hora_vencimiento,
+       id_estado, id_visitante, id_vehiculo, id_plaza_asignada, qr_token, id_persona,
+       estado ( id, nombre, contexto ),
+       persona ( id_persona, nombre, apellido ),
+       vehiculo (
          id_vehiculo, placa,
-         marcas_vehiculo ( id_marca, nombre ),
-         modelos_vehiculo ( id_modelo, nombre ),
-         colores_vehiculo ( id_color, nombre )
+         marca ( id_marca, nombre ),
+         modelo ( id_modelo, nombre ),
+         color ( id_color, nombre )
        )`
     )
-    .eq("Id_Ticket", id)
+    .eq("id_ticket", id)
     .single();
 
   if (error) throw error;
@@ -69,23 +69,21 @@ export async function getTicketById(id) {
 }
 
 // ─── Emitir un ticket ─────────────────────────────────────────────────────────
-// organizacion_id: requerido por RLS (service_role no lo inyecta)
 export async function emitirTicket({
   placa,
   plazaAsignada,
   personaId,
   dispositivoEntradaId,
   organizacion_id,
-  id_vehiculo,     // preferir ID directo si ya se conoce
+  id_vehiculo,
 }) {
   if (!placa)          throw new Error("La placa es requerida para emitir un ticket");
   if (!organizacion_id) throw new Error("organizacion_id es requerido para emitir un ticket");
 
-  // Buscar o crear vehículo — sin campos de texto libre
   let vehiculoId = id_vehiculo;
   if (!vehiculoId) {
     const { data: existente } = await supabase
-      .from("vehiculos")
+      .from("vehiculo")
       .select("id_vehiculo")
       .eq("placa", placa)
       .maybeSingle();
@@ -94,8 +92,8 @@ export async function emitirTicket({
       vehiculoId = existente.id_vehiculo;
     } else {
       const { data: nuevo, error } = await supabase
-        .from("vehiculos")
-        .insert({ placa })
+        .from("vehiculo")
+        .insert({ placa, organizacion_id })
         .select("id_vehiculo")
         .single();
       if (error) throw error;
@@ -108,16 +106,16 @@ export async function emitirTicket({
   const ID_ACTIVO   = await getEstadoTicketId("Activo");
 
   const { data: ticket, error } = await supabase
-    .from("tickets")
+    .from("ticket")
     .insert({
-      id_vehiculo:           vehiculoId,
-      Placa_Capturada:       placa,
-      Fecha_Hora_Emision:    ahora,
-      Fecha_Hora_Vencimiento: vencimiento,
-      Id_Plaza_Asignada:     plazaAsignada || null,
-      id_persona:            personaId     || null,
+      id_vehiculo:            vehiculoId,
+      placa_capturada:        placa,
+      fecha_hora_emision:     ahora,
+      fecha_hora_vencimiento: vencimiento,
+      id_plaza_asignada:      plazaAsignada || null,
+      id_persona:             personaId     || null,
       id_dispositivo_entrada: dispositivoEntradaId || null,
-      id_estado:             ID_ACTIVO,
+      id_estado:              ID_ACTIVO,
       organizacion_id,
     })
     .select("*, qr_token")
@@ -133,7 +131,7 @@ export async function emitirTicket({
 
   if (global.io) {
     global.io.emit("ticket-emitido", {
-      ticketId: ticket.Id_Ticket,
+      ticketId: ticket.id_ticket,
       placa,
       emision:  ahora,
     });
@@ -145,9 +143,9 @@ export async function emitirTicket({
 // ─── Actualizar estado de ticket ───────────────────────────────────────────────
 export async function updateTicketEstado(id, { id_estado }) {
   const { data, error } = await supabase
-    .from("tickets")
+    .from("ticket")
     .update({ id_estado })
-    .eq("Id_Ticket", id)
+    .eq("id_ticket", id)
     .select()
     .single();
 
@@ -158,9 +156,9 @@ export async function updateTicketEstado(id, { id_estado }) {
 // ─── Eliminar ticket ──────────────────────────────────────────────────────────
 export async function deleteTicket(id) {
   const { error } = await supabase
-    .from("tickets")
+    .from("ticket")
     .delete()
-    .eq("Id_Ticket", id);
+    .eq("id_ticket", id);
 
   if (error) throw error;
   return { deleted: true, id };

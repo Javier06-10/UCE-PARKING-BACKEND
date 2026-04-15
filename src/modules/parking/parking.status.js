@@ -1,66 +1,63 @@
 import supabase from "../../config/supabase.js";
 
-// ─── Estado general del parqueadero (snapshot para la app) ─────────────────────
+// ─── Estado general del parqueadero ────────────────────────────────────────────
 export async function getParkingStatus() {
-  // Zonas con sus plazas
   const { data: zonas, error: zonasError } = await supabase
-    .from("zonas_estacionamiento")
+    .from("zona")
     .select(`
-      Id_Zona, Nombre_Zona, Capacidad_Total,
-      plazas ( Id_Plaza, Numero_Plaza, id_estado,
-        estado_plaza ( id_estado, nombre_estado )
+      id_zona, nombre, capacidad_total,
+      plaza ( id_plaza, numero_plaza, id_estado,
+        estado:id_estado ( id_estado, nombre )
       )
     `);
 
   if (zonasError) throw zonasError;
 
-  // Calcular resumen por zona
   const resumen = zonas.map(zona => {
-    const plazas = zona.plazas || [];
-    const ocupadas = plazas.filter(p => p.estado_plaza?.nombre_estado === 'Ocupada').length;
-    const libres = plazas.filter(p => p.estado_plaza?.nombre_estado === 'Libre').length;
+    const plazas  = zona.plaza || [];
+    const ocupadas = plazas.filter(p => p.estado?.nombre === "Ocupada").length;
+    const libres   = plazas.filter(p => p.estado?.nombre === "Libre").length;
 
     return {
-      id_zona: zona.Id_Zona,
-      nombre: zona.Nombre_Zona,
-      capacidad_total: zona.Capacidad_Total,
+      id_zona:             zona.id_zona,
+      nombre:              zona.nombre,
+      capacidad_total:     zona.capacidad_total,
       ocupadas,
       libres,
-      porcentaje_ocupacion: zona.Capacidad_Total > 0
-        ? Math.round((ocupadas / zona.Capacidad_Total) * 100)
+      porcentaje_ocupacion: zona.capacidad_total > 0
+        ? Math.round((ocupadas / zona.capacidad_total) * 100)
         : 0,
-      plazas
+      plazas,
     };
   });
 
-  // Totales globales
   const totalCapacidad = resumen.reduce((s, z) => s + z.capacidad_total, 0);
-  const totalOcupadas = resumen.reduce((s, z) => s + z.ocupadas, 0);
-  const totalLibres = resumen.reduce((s, z) => s + z.libres, 0);
+  const totalOcupadas  = resumen.reduce((s, z) => s + z.ocupadas, 0);
+  const totalLibres    = resumen.reduce((s, z) => s + z.libres, 0);
 
   return {
-    total_capacidad: totalCapacidad,
-    total_ocupadas: totalOcupadas,
-    total_libres: totalLibres,
+    total_capacidad:      totalCapacidad,
+    total_ocupadas:       totalOcupadas,
+    total_libres:         totalLibres,
     porcentaje_ocupacion: totalCapacidad > 0
       ? Math.round((totalOcupadas / totalCapacidad) * 100)
       : 0,
-    zonas: resumen
+    zonas: resumen,
   };
 }
 
 // ─── Obtener plazas filtradas ──────────────────────────────────────────────────
 export async function getPlazas({ zonaId, estado } = {}) {
   let query = supabase
-    .from("plazas")
+    .from("plaza")
     .select(`
-      Id_Plaza, Numero_Plaza, Amplitud, Longitud, id_estado,
-      estado_plaza ( id_estado, nombre_estado ),
-      zonas_estacionamiento ( Id_Zona, Nombre_Zona )
+      id_plaza, numero_plaza, amplitud, longitud, id_estado,
+      estado:id_estado ( id_estado, nombre ),
+      zona ( id_zona, nombre )
     `)
-    .order("Id_Plaza");
+    .order("id_plaza");
 
-  if (zonaId) query = query.eq("Id_Zona", zonaId);
+  if (zonaId) query = query.eq("id_zona", zonaId);
   if (estado) query = query.eq("id_estado", estado);
 
   const { data, error } = await query;
