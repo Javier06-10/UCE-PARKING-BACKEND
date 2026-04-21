@@ -1,15 +1,15 @@
 import supabase from "../../config/supabase.js";
 
-// ─── Reporte General (Ocupación y Actividad) ───────────────────────────────────
+// ─── Reporte General (Ocupacion y Actividad) ───────────────────────────────────
 export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {}) {
   if (!fechaDesde || !fechaHasta) {
     throw new Error("fechaDesde y fechaHasta son requeridos");
   }
 
-  // 1. Registros de Acceso (Ocupación)
+  // 1. Registros de acceso
   let queryAccesos = supabase
-    .from("registros_acceso")
-    .select(`id, entrada_at, salida_at, Id_Plaza`)
+    .from("acceso")
+    .select("id_registro, entrada_at, salida_at, id_plaza")
     .gte("entrada_at", fechaDesde)
     .lte("entrada_at", fechaHasta)
     .order("entrada_at", { ascending: true });
@@ -21,14 +21,14 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
   let registrosFiltrados = registros;
   if (zonaId) {
     const { data: plazasZona } = await supabase
-      .from("plazas")
-      .select("Id_Plaza")
-      .eq("Id_Zona", zonaId);
-    const plazasDeLaZona = new Set((plazasZona || []).map(p => p.Id_Plaza));
-    registrosFiltrados = registros.filter(r => r.Id_Plaza && plazasDeLaZona.has(r.Id_Plaza));
+      .from("plaza")
+      .select("id_plaza")
+      .eq("id_zona", zonaId);
+    const plazasDeLaZona = new Set((plazasZona || []).map(p => p.id_plaza));
+    registrosFiltrados = registros.filter(r => r.id_plaza && plazasDeLaZona.has(r.id_plaza));
   }
 
-  // Cálculos Ocupación
+  // Calculos de ocupacion
   const totalEntradas = registrosFiltrados.length;
   const totalSalidas = registrosFiltrados.filter(r => r.salida_at).length;
   const vehiculosActivos = registrosFiltrados.filter(r => !r.salida_at).length;
@@ -38,25 +38,28 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
   completados.forEach(r => {
     duracionTotalMin += (new Date(r.salida_at) - new Date(r.entrada_at)) / 60000;
   });
-  const duracionPromedioMin = completados.length > 0 ? Math.round(duracionTotalMin / completados.length) : 0;
+  const duracionPromedioMin = completados.length > 0
+    ? Math.round(duracionTotalMin / completados.length)
+    : 0;
 
-  // Ocupación por hora del día
+  // Ocupacion por hora del dia
   const porHora = Array(24).fill(0);
   registrosFiltrados.forEach(r => {
     const hora = new Date(r.entrada_at).getHours();
     porHora[hora]++;
   });
   const ocupacionPorHora = porHora.map((count, hora) => ({ hora, entradas: count }));
-  
-  const maxEntradas = Math.max(...porHora);
-  const horaPico = totalEntradas > 0 ? `${String(porHora.indexOf(maxEntradas)).padStart(2, "0")}:00` : "N/A";
 
-  // Ocupación por día (Fixed timezone issue)
+  const maxEntradas = Math.max(...porHora);
+  const horaPico = totalEntradas > 0
+    ? `${String(porHora.indexOf(maxEntradas)).padStart(2, "0")}:00`
+    : "N/A";
+
+  // Ocupacion por dia
   const porDia = {};
   registrosFiltrados.forEach(r => {
-    // Convert to local date string format YYYY-MM-DD reliably
     const d = new Date(r.entrada_at);
-    const dia = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dia = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     porDia[dia] = (porDia[dia] || 0) + 1;
   });
   const ocupacionPorDia = Object.entries(porDia)
@@ -64,43 +67,39 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
     .sort((a, b) => a.fecha.localeCompare(b.fecha));
 
   // 2. Tickets
-  const { count: ticketsEmitidos, error: errT1 } = await supabase
-    .from("tickets")
-    .select("Id_Ticket", { count: "exact", head: true })
-    .gte("Fecha_Hora_Emision", fechaDesde)
-    .lte("Fecha_Hora_Emision", fechaHasta);
+  const { count: ticketsEmitidos } = await supabase
+    .from("ticket")
+    .select("id_ticket", { count: "exact", head: true })
+    .gte("fecha_hora_emision", fechaDesde)
+    .lte("fecha_hora_emision", fechaHasta);
 
-  const { count: ticketsActivos, error: errT2 } = await supabase
-    .from("tickets")
-    .select("Id_Ticket", { count: "exact", head: true })
-    .gte("Fecha_Hora_Emision", fechaDesde)
-    .lte("Fecha_Hora_Emision", fechaHasta)
-    .eq("id_estado", 1); // 1 = Activo según el sistema
+  const { count: ticketsActivos } = await supabase
+    .from("ticket")
+    .select("id_ticket", { count: "exact", head: true })
+    .gte("fecha_hora_emision", fechaDesde)
+    .lte("fecha_hora_emision", fechaHasta)
+    .eq("id_estado", 1);
 
-  // 3. Vehículos Registrados
-  const { count: nuevosVehiculos, error: errV } = await supabase
-    .from("vehiculos")
-    .select("id", { count: "exact", head: true })
-    .gte("Fecha_Registro", fechaDesde)
-    .lte("Fecha_Registro", fechaHasta);
+  // 3. Vehiculos registrados
+  const { count: nuevosVehiculos } = await supabase
+    .from("vehiculo")
+    .select("id_vehiculo", { count: "exact", head: true })
+    .gte("created_at", fechaDesde)
+    .lte("created_at", fechaHasta);
 
-  // 4. Nuevos Usuarios
-  const { count: nuevosUsuarios, error: errU } = await supabase
-    .from("usuarios")
+  // 4. Nuevos usuarios
+  const { count: nuevosUsuarios } = await supabase
+    .from("usuario")
     .select("id", { count: "exact", head: true })
     .gte("created_at", fechaDesde)
     .lte("created_at", fechaHasta);
 
   // 5. Reservas
-  const { count: totalReservas, error: errR } = await supabase
-    .from("RESERVA")
-    .select("Id_Reserva", { count: "exact", head: true })
+  const { count: totalReservas } = await supabase
+    .from("reserva")
+    .select("id_reserva", { count: "exact", head: true })
     .gte("created_at", fechaDesde)
     .lte("created_at", fechaHasta);
-
-  if (errT1 || errT2 || errV || errU || errR) {
-    console.error("Error obteniendo datos generales para reporte:", { errT1, errT2, errV, errU, errR });
-  }
 
   return {
     periodo: { desde: fechaDesde, hasta: fechaHasta },
@@ -125,23 +124,24 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
   };
 }
 
-// ─── Reporte de Eventos (Hardware/Sistema) ──────────────────────────────────
+// ─── Reporte de Eventos ───────────────────────────────────────────────────────
 export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
   if (!fechaDesde || !fechaHasta) {
     throw new Error("fechaDesde y fechaHasta son requeridos");
   }
 
   const { data: eventos, error } = await supabase
-    .from("eventos")
-    .select("*")
-    .gte("Fecha_Creacion", fechaDesde)
-    .lte("Fecha_Creacion", fechaHasta)
-    .order("Fecha_Creacion", { ascending: false });
+    .from("evento")
+    .select(`
+      id_log, fecha_hora, descripcion, id_dispositivo, created_at,
+      tipo_evento ( id_tipo, nombre ),
+      origen_evento ( id_origen, nombre )
+    `)
+    .gte("created_at", fechaDesde)
+    .lte("created_at", fechaHasta)
+    .order("created_at", { ascending: false });
 
-  if (error) {
-    console.error("Error obteniendo eventos:", error);
-    throw error;
-  }
+  if (error) throw error;
 
   return {
     periodo: { desde: fechaDesde, hasta: fechaHasta },
@@ -150,34 +150,39 @@ export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
 }
 
 // ─── Guardar reporte en la BD ──────────────────────────────────────────────────
-export async function guardarReporte({ tipo, descripcion, datos, personaId }) {
-  // Truncate desc so it doesn't crash if it's too long
-  const safeDesc = (descripcion || `Reporte generado el ${new Date().toISOString()}`).substring(0, 250);
-  
-  // Convert datos to JSON string, but if Datos_Adjuntos_Ruta is just a varchar we need to truncate.
-  // Ideally this would be a JSON or TEXT column, but we will store a safe summary snippet.
+export async function guardarReporte({ tipo, descripcion, datos, personaId, organizacion_id }) {
+  const safeDesc = (descripcion || `Reporte generado el ${new Date().toISOString()}`).substring(0, 500);
+
   const fullJsonString = JSON.stringify(datos);
-  const safeJsonString = fullJsonString.length > 250 
-      ? JSON.stringify({ 
-          resumen: "Data truncada por limite de bd", 
-          periodo: datos.periodo || {},
-          preview: fullJsonString.substring(0, 100) + "..." 
-        })
-      : fullJsonString;
+  const ruta = fullJsonString.length > 500
+    ? JSON.stringify({
+        resumen: "Data truncada por limite de columna",
+        periodo: datos.periodo || {},
+        preview: fullJsonString.substring(0, 200) + "..."
+      })
+    : fullJsonString;
+
+  // Buscar id del tipo_reporte por nombre
+  const { data: tipoRow } = await supabase
+    .from("tipo_reporte")
+    .select("id_tipo")
+    .eq("nombre", tipo || "GENERAL")
+    .maybeSingle();
 
   const { data, error } = await supabase
-    .from("reportes")
+    .from("reporte")
     .insert({
-      Tipo_Reporte: tipo || "OCUPACION",
-      Descripcion: safeDesc,
-      Datos_Adjuntos_Ruta: safeJsonString,
-      persona_id: personaId || null
+      ruta_adjunto: ruta,
+      descripcion: safeDesc,
+      id_persona: personaId || null,
+      organizacion_id: organizacion_id || 1,
+      id_tipo: tipoRow?.id_tipo || null
     })
     .select()
     .single();
 
   if (error) {
-    console.error("Supabase insert error in guardarReporte:", error.message, error.details);
+    console.error("Error al guardar reporte:", error.message);
     throw new Error("Error al guardar en BD: " + error.message);
   }
   return data;
@@ -189,10 +194,11 @@ export async function getReportes({ page = 1, limit = 20 } = {}) {
   const to = from + limit - 1;
 
   const { data, error, count } = await supabase
-    .from("reportes")
+    .from("reporte")
     .select(
-      `Id_Reporte, created_at, Tipo_Reporte, Descripcion,
-       personas ( id, nombre, apellido )`,
+      `id_reporte, created_at, descripcion,
+       tipo_reporte ( id_tipo, nombre ),
+       persona ( id_persona, nombre, apellido )`,
       { count: "exact" }
     )
     .order("created_at", { ascending: false })

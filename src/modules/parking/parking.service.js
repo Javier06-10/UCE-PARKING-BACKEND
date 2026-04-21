@@ -10,18 +10,17 @@ async function updatePlazas(plazas) {
     const nuevoEstado = plaza.occupied ? ESTADO_OCUPADA : ESTADO_LIBRE;
 
     const { data: plazaActual } = await supabase
-      .from("plazas")
+      .from("plaza")
       .select("id_estado")
-      .eq("Id_Plaza", plaza.id)
+      .eq("id_plaza", plaza.id)
       .single();
 
     if (!plazaActual || plazaActual.id_estado === nuevoEstado) continue;
 
-    // Actualizar estado plaza
     await supabase
-      .from("plazas")
+      .from("plaza")
       .update({ id_estado: nuevoEstado })
-      .eq("Id_Plaza", plaza.id);
+      .eq("id_plaza", plaza.id);
 
     if (plaza.occupied) {
       await asignarPlaza(plaza);
@@ -33,10 +32,10 @@ async function updatePlazas(plazas) {
 
 async function asignarPlaza(plaza) {
   const { data: accesoAbierto } = await supabase
-    .from("registros_acceso")
-    .select("*")
+    .from("acceso")
+    .select("id_registro, id_vehiculo")
     .is("salida_at", null)
-    .is("Id_Plaza", null)
+    .is("id_plaza", null)
     .order("entrada_at", { ascending: false })
     .limit(1)
     .single();
@@ -47,113 +46,110 @@ async function asignarPlaza(plaza) {
   const reserva = await getReservaActiva(plaza.id);
 
   const { data: vehiculo } = await supabase
-    .from("vehiculos")
-    .select("persona_id")
-    .eq("id", accesoAbierto.vehiculo_id)
+    .from("vehiculo")
+    .select("id_persona")
+    .eq("id_vehiculo", accesoAbierto.id_vehiculo)
     .single();
 
-  const personaVehiculo = vehiculo?.persona_id;
+  const personaVehiculo = vehiculo?.id_persona;
 
-  // Prioridad 1: Asignación permanente
   if (asignacion) {
-    return await manejarAsignacion(
-      asignacion,
-      accesoAbierto,
-      plaza,
-      personaVehiculo,
-    );
+    return await manejarAsignacion(asignacion, accesoAbierto, plaza, personaVehiculo);
   }
 
-  // Prioridad 2: Reserva
   if (reserva) {
     return await manejarReserva(reserva, accesoAbierto, plaza, personaVehiculo);
   }
 
-  // Prioridad 3: Plaza libre
   await asignarPlazaLibre(accesoAbierto, plaza);
 }
 
-async function manejarAsignacion(
-  asignacion,
-  accesoAbierto,
-  plaza,
-  personaVehiculo,
-) {
-  if (asignacion.Id_Vehiculo_Asignado === accesoAbierto.vehiculo_id) {
-    await supabase
-      .from("registros_acceso")
-      .update({ Id_Plaza: plaza.id })
-      .eq("id", accesoAbierto.id);
+async function manejarAsignacion(asignacion, accesoAbierto, plaza, personaVehiculo) {
+  // La asignacion ahora es a empleado, se verifica si el vehiculo pertenece al empleado
+  const { data: empleado } = await supabase
+    .from("empleado")
+    .select("id_persona")
+    .eq("id_empleado", asignacion.id_empleado)
+    .single();
 
-    console.log("🏢 Plaza asignada por asignación permanente");
+  if (empleado?.id_persona === personaVehiculo) {
+    await supabase
+      .from("acceso")
+      .update({ id_plaza: plaza.id })
+      .eq("id_registro", accesoAbierto.id_registro);
+
+    console.log("Plaza asignada por asignacion permanente");
   } else {
     await registrarConflicto(
       "CONFLICTO_ASIGNACION",
       `Intento de ocupar plaza asignada ${plaza.id}`,
       plaza.id,
-      personaVehiculo,
+      personaVehiculo
     );
-    console.log("⚠ Conflicto de asignación permanente");
+    console.log("Conflicto de asignacion permanente");
   }
 }
 
 async function manejarReserva(reserva, accesoAbierto, plaza, personaVehiculo) {
   if (personaVehiculo === reserva.id_persona) {
     await supabase
-      .from("registros_acceso")
-      .update({ Id_Plaza: plaza.id })
-      .eq("id", accesoAbierto.id);
+      .from("acceso")
+      .update({ id_plaza: plaza.id })
+      .eq("id_registro", accesoAbierto.id_registro);
 
-    console.log("📅 Plaza asignada por reserva");
+    console.log("Plaza asignada por reserva");
   } else {
     await registrarConflicto(
       "CONFLICTO_RESERVA",
       `Intento de ocupar plaza reservada ${plaza.id}`,
       plaza.id,
-      personaVehiculo,
+      personaVehiculo
     );
-    console.log("⚠ Conflicto de reserva");
+    console.log("Conflicto de reserva");
   }
 }
 
 async function asignarPlazaLibre(accesoAbierto, plaza) {
   await supabase
-    .from("registros_acceso")
-    .update({ Id_Plaza: plaza.id })
-    .eq("id", accesoAbierto.id);
+    .from("acceso")
+    .update({ id_plaza: plaza.id })
+    .eq("id_registro", accesoAbierto.id_registro);
 
-  console.log("🚗 Plaza asignada libremente");
+  console.log("Plaza asignada libremente");
 }
 
-async function registrarConflicto(tipoEvento, descripcion, idPlaza, idPersona) {
-  await supabase.from("eventos").insert({
-    Fecha_Hora: new Date(),
-    Tipo_Evento: tipoEvento,
-    Descripcion: descripcion,
-    Id_Plaza: idPlaza,
+async function registrarConflicto(tipoDescripcion, descripcion, idPlaza, idPersona) {
+  const { data: tipoEvento } = await supabase
+    .from("tipo_evento")
+    .select("id_tipo")
+    .eq("nombre", tipoDescripcion)
+    .maybeSingle();
+
+  await supabase.from("evento").insert({
+    fecha_hora: new Date(),
+    descripcion,
+    id_plaza: idPlaza,
     id_persona: idPersona,
-    origen_evento: "SISTEMA",
+    organizacion_id: 1,
+    id_tipo: tipoEvento?.id_tipo || null
   });
 }
 
 async function cerrarRegistroPlaza(plaza) {
   const { data: acceso } = await supabase
-    .from("registros_acceso")
-    .select("*")
-    .eq("Id_Plaza", plaza.id)
+    .from("acceso")
+    .select("id_registro")
+    .eq("id_plaza", plaza.id)
     .is("salida_at", null)
     .single();
 
   if (acceso) {
     await supabase
-      .from("registros_acceso")
-      .update({
-        salida_at: new Date(),
-        tipo_evento: "SALIDA",
-      })
-      .eq("id", acceso.id);
+      .from("acceso")
+      .update({ salida_at: new Date() })
+      .eq("id_registro", acceso.id_registro);
 
-    console.log(`🚙 Registro ${acceso.id} cerrado`);
+    console.log(`Registro ${acceso.id_registro} cerrado`);
   }
 }
 

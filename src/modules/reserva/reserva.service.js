@@ -1,62 +1,68 @@
 import supabase from "../../config/supabase.js";
 
+// IDs de estado_reserva (deben coincidir con los registros en la BD)
+const ESTADO_ACTIVA = 1;
+const ESTADO_CANCELADA = 2;
+const ESTADO_EXPIRADA = 3;
+
 // ─── Helper: reserva activa en una plaza ──────────────────────────────────────
 export async function getReservaActiva(plazaId) {
+  const now = new Date().toISOString();
+
   const { data, error } = await supabase
-    .from('RESERVA')
-    .select('*')
-    .eq('Id_Plaza', plazaId)
-    .eq('Estado_Reserva', 'Activa')
-    .lte('Fecha_Hora_Inicio', new Date().toISOString())
-    .gte('Fecha_Hora_Fin', new Date().toISOString())
-    .maybeSingle(); // ← maybeSingle evita error si no hay ninguna
+    .from("reserva")
+    .select("id_reserva, id_plaza, id_persona, fecha_hora_inicio, fecha_hora_fin")
+    .eq("id_plaza", plazaId)
+    .eq("id_estado", ESTADO_ACTIVA)
+    .lte("fecha_hora_inicio", now)
+    .gte("fecha_hora_fin", now)
+    .maybeSingle();
 
   if (error) return null;
   return data;
 }
 
 // ─── Crear reserva ────────────────────────────────────────────────────────────
-// userId = auth.users.id (UUID) → se busca el persona_id correspondiente
 export async function crearReserva(plazaId, userId, start, end) {
 
-  // 1. Resolver persona_id desde auth.users.id → public.usuarios.persona_id
+  // 1. Resolver id_persona desde usuario.id (auth UUID)
   const { data: usuarioRow, error: userError } = await supabase
-    .from('usuarios')
-    .select('persona_id')
-    .eq('id', userId)
+    .from("usuario")
+    .select("id_persona, organizacion_id")
+    .eq("id", userId)
     .maybeSingle();
 
   if (userError || !usuarioRow) {
-    throw new Error("No se encontró el perfil del usuario autenticado.");
+    throw new Error("No se encontro el perfil del usuario autenticado.");
   }
-  const personaId = usuarioRow.persona_id;
+  const { id_persona: personaId, organizacion_id } = usuarioRow;
 
-  // 2. Verificar solapamiento de reservas en esa plaza
-  // Condición de solapamiento: (NuevoInicio < FinExistente) AND (NuevoFin > InicioExistente)
+  // 2. Verificar solapamiento (NuevoInicio < FinExistente AND NuevoFin > InicioExistente)
   const { data: overlapping, error: checkError } = await supabase
-    .from('RESERVA')
-    .select('Id_Reserva')
-    .eq('Id_Plaza', plazaId)
-    .eq('Estado_Reserva', 'Activa')
-    .lt('Fecha_Hora_Inicio', end.toISOString())
-    .gt('Fecha_Hora_Fin', start.toISOString());
+    .from("reserva")
+    .select("id_reserva")
+    .eq("id_plaza", plazaId)
+    .eq("id_estado", ESTADO_ACTIVA)
+    .lt("fecha_hora_inicio", end.toISOString())
+    .gt("fecha_hora_fin", start.toISOString());
 
   if (checkError) {
-    throw new Error("Error verificando disponibilidad de la plaza: " + checkError.message);
+    throw new Error("Error verificando disponibilidad: " + checkError.message);
   }
   if (overlapping && overlapping.length > 0) {
-    throw new Error("La plaza ya está reservada en ese horario.");
+    throw new Error("La plaza ya esta reservada en ese horario.");
   }
 
-  // 3. Insertar reserva con id_persona (campo correcto según schema)
+  // 3. Insertar reserva
   const { data, error } = await supabase
-    .from('RESERVA')
+    .from("reserva")
     .insert({
-      Id_Plaza:          plazaId,
-      id_persona:        personaId,   // ✅ campo correcto del schema
-      Fecha_Hora_Inicio: start.toISOString(),
-      Fecha_Hora_Fin:    end.toISOString(),
-      Estado_Reserva:    'Activa'
+      id_plaza: plazaId,
+      id_persona: personaId,
+      fecha_hora_inicio: start.toISOString(),
+      fecha_hora_fin: end.toISOString(),
+      id_estado: ESTADO_ACTIVA,
+      organizacion_id: organizacion_id || 1
     })
     .select()
     .single();
@@ -66,64 +72,54 @@ export async function crearReserva(plazaId, userId, start, end) {
 }
 
 // ─── Listar reservas del usuario ──────────────────────────────────────────────
-// Incluye: plaza (Numero_Plaza) + zona (Nombre_Zona) para mostrar en Flutter
 export async function listarReservasUser(userId) {
 
-  // 1. Resolver persona_id
   const { data: usuarioRow, error: userError } = await supabase
-    .from('usuarios')
-    .select('persona_id')
-    .eq('id', userId)
+    .from("usuario")
+    .select("id_persona")
+    .eq("id", userId)
     .maybeSingle();
 
   if (userError || !usuarioRow) {
-    throw new Error("No se encontró el perfil del usuario.");
+    throw new Error("No se encontro el perfil del usuario.");
   }
 
-  // 2. Traer reservas con join a plazas y zonas
   const { data, error } = await supabase
-    .from('RESERVA')
+    .from("reserva")
     .select(`
-      Id_Reserva,
-      Fecha_Hora_Inicio,
-      Fecha_Hora_Fin,
-      Estado_Reserva,
-      created_at,
-      Id_Plaza,
-      plazas (
-        Id_Plaza,
-        Numero_Plaza,
-        zonas_estacionamiento ( Id_Zona, Nombre_Zona )
+      id_reserva, fecha_hora_inicio, fecha_hora_fin, id_estado, created_at, id_plaza,
+      estado_reserva ( id_estado, nombre ),
+      plaza (
+        id_plaza, numero_plaza,
+        zona ( id_zona, nombre )
       )
     `)
-    .eq('id_persona', usuarioRow.persona_id)   // ✅ campo correcto
-    .order('Fecha_Hora_Inicio', { ascending: false });
+    .eq("id_persona", usuarioRow.id_persona)
+    .order("fecha_hora_inicio", { ascending: false });
 
   if (error) throw new Error("Error al listar reservas: " + error.message);
   return data || [];
 }
 
 // ─── Cancelar reserva ─────────────────────────────────────────────────────────
-// Protección: solo cancela si pertenece al usuario y está Activa
 export async function cancelarReserva(reservaId, userId) {
 
-  // Resolver persona_id
   const { data: usuarioRow, error: userError } = await supabase
-    .from('usuarios')
-    .select('persona_id')
-    .eq('id', userId)
+    .from("usuario")
+    .select("id_persona")
+    .eq("id", userId)
     .maybeSingle();
 
   if (userError || !usuarioRow) {
-    throw new Error("No se encontró el perfil del usuario.");
+    throw new Error("No se encontro el perfil del usuario.");
   }
 
   const { data, error } = await supabase
-    .from('RESERVA')
-    .update({ Estado_Reserva: 'Cancelada' })
-    .eq('Id_Reserva', reservaId)
-    .eq('id_persona', usuarioRow.persona_id)  // ✅ campo correcto
-    .eq('Estado_Reserva', 'Activa')           // Solo si está activa
+    .from("reserva")
+    .update({ id_estado: ESTADO_CANCELADA })
+    .eq("id_reserva", reservaId)
+    .eq("id_persona", usuarioRow.id_persona)
+    .eq("id_estado", ESTADO_ACTIVA)
     .select()
     .single();
 

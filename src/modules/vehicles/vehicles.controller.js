@@ -12,18 +12,13 @@ import {
 export async function listVehicles(req, res) {
   try {
     const { page = 1, limit = 20, search = "" } = req.query;
-    const persona_id = req.user?.id; // Obtener el ID del usuario logueado desde el token JWT
-    
+    const persona_id = req.user?.id;
+
     if (!persona_id) {
-       return res.status(401).json({ ok: false, error: "Usuario no autenticado." });
+      return res.status(401).json({ ok: false, error: "Usuario no autenticado." });
     }
 
-    const result = await getAllVehicles({
-      page: Number(page),
-      limit: Number(limit),
-      search,
-      persona_id
-    });
+    const result = await getAllVehicles({ page: Number(page), limit: Number(limit), search, persona_id });
     res.json({ ok: true, ...result });
   } catch (error) {
     console.error("[vehicles] listVehicles:", error.message);
@@ -55,10 +50,11 @@ export async function getByPlaca(req, res) {
 }
 
 // POST /api/vehicles
+// Body: { placa, id_modelo, id_color, id_persona, organizacion_id, id_estado?, id_tipo? }
 export async function createVehicleHandler(req, res) {
   try {
-    const { placa, Marca, Color, persona_id } = req.body;
-    const data = await createVehicle({ placa, Marca, Color, persona_id });
+    const { placa, id_modelo, id_color, id_persona, organizacion_id, id_estado, id_tipo } = req.body;
+    const data = await createVehicle({ placa, id_modelo, id_color, id_persona, organizacion_id, id_estado, id_tipo });
     res.status(201).json({ ok: true, data });
   } catch (error) {
     console.error("[vehicles] createVehicle:", error.message);
@@ -67,10 +63,11 @@ export async function createVehicleHandler(req, res) {
 }
 
 // PUT /api/vehicles/:id
+// Body: { placa?, id_modelo?, id_color?, id_persona?, id_estado?, id_tipo? }
 export async function updateVehicleHandler(req, res) {
   try {
-    const { placa, Marca, Color, persona_id } = req.body;
-    const data = await updateVehicle(req.params.id, { placa, Marca, Color, persona_id });
+    const { placa, id_modelo, id_color, id_persona, id_estado, id_tipo } = req.body;
+    const data = await updateVehicle(req.params.id, { placa, id_modelo, id_color, id_persona, id_estado, id_tipo });
     res.json({ ok: true, data });
   } catch (error) {
     console.error("[vehicles] updateVehicle:", error.message);

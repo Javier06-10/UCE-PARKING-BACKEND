@@ -1,31 +1,28 @@
 import supabase from "../../config/supabase.js";
 
+const TICKET_SELECT = `
+  id_ticket, placa_capturada, fecha_hora_emision, fecha_hora_vencimiento,
+  id_plaza_asignada, id_estado, qr_token, organizacion_id,
+  visitante_nombre, visitante_apellido, visitante_telefono, visitante_sexo, descripcion,
+  estado_ticket ( id_estado, nombre ),
+  marca ( id_marca, nombre ),
+  modelo ( id_modelo, nombre ),
+  color ( id_color, nombre )
+`;
+
 // ─── Listar tickets con paginación y filtros ───────────────────────────────────
 export async function getAllTickets({ page = 1, limit = 20, estado, search } = {}) {
   const from = (page - 1) * limit;
   const to = from + limit - 1;
 
   let query = supabase
-    .from("tickets")
-    .select(
-      `Id_Ticket, Placa_Capturada, Fecha_Hora_Emision, Fecha_Hora_Vencimiento,
-       Estado, Color_Vehiculo, Marca_Vehiculo,
-       id_estado, id_persona, Id_Vehiculo, Id_Plaza_Asignada,
-       estado_ticket ( id_estado, nombre_estado ),
-       personas ( id, nombre, apellido ),
-       vehiculos ( id, placa, Marca, Color )`,
-      { count: "exact" }
-    )
-    .order("Fecha_Hora_Emision", { ascending: false })
+    .from("ticket")
+    .select(TICKET_SELECT, { count: "exact" })
+    .order("fecha_hora_emision", { ascending: false })
     .range(from, to);
 
-  if (estado) {
-    query = query.eq("id_estado", estado);
-  }
-
-  if (search) {
-    query = query.ilike("Placa_Capturada", `%${search}%`);
-  }
+  if (estado) query = query.eq("id_estado", estado);
+  if (search) query = query.ilike("placa_capturada", `%${search}%`);
 
   const { data, error, count } = await query;
   if (error) throw error;
@@ -36,80 +33,63 @@ export async function getAllTickets({ page = 1, limit = 20, estado, search } = {
 // ─── Obtener ticket por ID ─────────────────────────────────────────────────────
 export async function getTicketById(id) {
   const { data, error } = await supabase
-    .from("tickets")
-    .select(
-      `Id_Ticket, Placa_Capturada, Fecha_Hora_Emision, Fecha_Hora_Vencimiento,
-       Estado, Color_Vehiculo, Marca_Vehiculo,
-       id_estado, id_persona, Id_Vehiculo, Id_Plaza_Asignada,
-       estado_ticket ( id_estado, nombre_estado ),
-       personas ( id, nombre, apellido ),
-       vehiculos ( id, placa, Marca, Color )`
-    )
-    .eq("Id_Ticket", id)
+    .from("ticket")
+    .select(TICKET_SELECT)
+    .eq("id_ticket", id)
     .single();
 
   if (error) throw error;
   return data;
 }
 
-// ─── Emitir un ticket (vehículo no registrado) ────────────────────────────────
+// ─── Emitir ticket ────────────────────────────────────────────────────────────
+// Recibe: placa, visitante_nombre, visitante_apellido, visitante_telefono,
+//         visitante_sexo, id_color_capturado, id_marca_capturada, id_modelo_capturado,
+//         plazaAsignada, organizacion_id, descripcion
 export async function emitirTicket({
   placa,
-  color,
-  marca,
+  visitante_nombre,
+  visitante_apellido,
+  visitante_telefono,
+  visitante_sexo,
+  id_color_capturado,
+  id_marca_capturada,
+  id_modelo_capturado,
   plazaAsignada,
-  personaId,
-  dispositivoEntradaId
+  organizacion_id,
+  descripcion
 }) {
   if (!placa) throw new Error("La placa es requerida para emitir un ticket");
 
-  // Buscar o crear vehículo
-  let vehiculo;
-  const { data: existente } = await supabase
-    .from("vehiculos")
-    .select("id")
-    .eq("placa", placa)
-    .maybeSingle();
-
-  if (existente) {
-    vehiculo = existente;
-  } else {
-    const { data: nuevo, error } = await supabase
-      .from("vehiculos")
-      .insert({ placa, Marca: marca || null, Color: color || null })
-      .select("id")
-      .single();
-    if (error) throw error;
-    vehiculo = nuevo;
-  }
-
-  // Crear ticket — vence en 24h por defecto
   const ahora = new Date();
   const vencimiento = new Date(ahora.getTime() + 24 * 60 * 60 * 1000);
 
   const { data: ticket, error } = await supabase
-    .from("tickets")
+    .from("ticket")
     .insert({
-      Id_Vehiculo: vehiculo.id,
-      Placa_Capturada: placa,
-      Color_Vehiculo: color || null,
-      Marca_Vehiculo: marca || null,
-      Fecha_Hora_Emision: ahora,
-      Fecha_Hora_Vencimiento: vencimiento,
-      Id_Plaza_Asignada: plazaAsignada || null,
-      id_persona: personaId || null,
-      id_dispositivo_entrada: dispositivoEntradaId || null,
-      id_estado: 1 // Estado inicial (ej: "Activo")
+      placa_capturada: placa,
+      fecha_hora_emision: ahora,
+      fecha_hora_vencimiento: vencimiento,
+      id_plaza_asignada: plazaAsignada || null,
+      id_estado: 1,
+      organizacion_id: organizacion_id || 1,
+      visitante_nombre: visitante_nombre || null,
+      visitante_apellido: visitante_apellido || null,
+      visitante_telefono: visitante_telefono || null,
+      visitante_sexo: visitante_sexo || null,
+      id_color_capturado: id_color_capturado || null,
+      id_marca_capturada: id_marca_capturada || null,
+      id_modelo_capturado: id_modelo_capturado || null,
+      descripcion: descripcion || null
     })
     .select()
     .single();
 
   if (error) throw error;
 
-  // Emitir evento en tiempo real
   if (global.io) {
     global.io.emit("ticket-emitido", {
-      ticketId: ticket.Id_Ticket,
+      ticketId: ticket.id_ticket,
       placa,
       emision: ahora
     });
@@ -119,15 +99,11 @@ export async function emitirTicket({
 }
 
 // ─── Actualizar estado de ticket ───────────────────────────────────────────────
-export async function updateTicketEstado(id, { id_estado, Estado }) {
-  const campos = {};
-  if (id_estado !== undefined) campos.id_estado = id_estado;
-  if (Estado !== undefined) campos.Estado = Estado;
-
+export async function updateTicketEstado(id, { id_estado }) {
   const { data, error } = await supabase
-    .from("tickets")
-    .update(campos)
-    .eq("Id_Ticket", id)
+    .from("ticket")
+    .update({ id_estado })
+    .eq("id_ticket", id)
     .select()
     .single();
 
@@ -135,12 +111,12 @@ export async function updateTicketEstado(id, { id_estado, Estado }) {
   return data;
 }
 
-// ─── Eliminar ticket ──────────────────────────────────────────────────────────
+// ─── Eliminar ticket ───────────────────────────────────────────────────────────
 export async function deleteTicket(id) {
   const { error } = await supabase
-    .from("tickets")
+    .from("ticket")
     .delete()
-    .eq("Id_Ticket", id);
+    .eq("id_ticket", id);
 
   if (error) throw error;
   return { deleted: true, id };

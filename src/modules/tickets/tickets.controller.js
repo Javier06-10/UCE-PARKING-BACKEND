@@ -35,17 +35,41 @@ export async function getTicket(req, res) {
 }
 
 // POST /api/tickets
+// Body: { placa, visitante_nombre?, visitante_apellido?, visitante_telefono?,
+//         visitante_sexo?, id_color_capturado?, id_marca_capturada?, id_modelo_capturado?,
+//         plazaAsignada?, organizacion_id, descripcion? }
 export async function createTicket(req, res) {
   try {
-    const { placa, color, marca, plazaAsignada, personaId, dispositivoEntradaId } = req.body;
-    const data = await emitirTicket({ placa, color, marca, plazaAsignada, personaId, dispositivoEntradaId });
-    
-    // Notificar a los administradores de un nuevo ingreso
+    const {
+      placa,
+      visitante_nombre,
+      visitante_apellido,
+      visitante_telefono,
+      visitante_sexo,
+      id_color_capturado,
+      id_marca_capturada,
+      id_modelo_capturado,
+      plazaAsignada,
+      organizacion_id,
+      descripcion
+    } = req.body;
+
+    const data = await emitirTicket({
+      placa,
+      visitante_nombre,
+      visitante_apellido,
+      visitante_telefono,
+      visitante_sexo,
+      id_color_capturado,
+      id_marca_capturada,
+      id_modelo_capturado,
+      plazaAsignada,
+      organizacion_id,
+      descripcion
+    });
+
     import("../../core/notifications.service.js").then(({ notifyAdmin }) => {
-      notifyAdmin("NUEVO_INGRESO", {
-        mensaje: `Vehículo ${placa} ha ingresado.`,
-        ticket: data
-      });
+      notifyAdmin("NUEVO_INGRESO", { mensaje: `Vehículo ${placa} ha ingresado.`, ticket: data });
     });
 
     res.status(201).json({ ok: true, data });
@@ -58,13 +82,12 @@ export async function createTicket(req, res) {
 // PATCH /api/tickets/:id/estado
 export async function patchTicketEstado(req, res) {
   try {
-    const { id_estado, Estado } = req.body;
-    const data = await updateTicketEstado(req.params.id, { id_estado, Estado });
-    
-    // Notificar a los administradores de una salida / actualización
+    const { id_estado } = req.body;
+    const data = await updateTicketEstado(req.params.id, { id_estado });
+
     import("../../core/notifications.service.js").then(({ notifyAdmin }) => {
       notifyAdmin("TICKET_ACTUALIZADO", {
-        mensaje: `Ticket ${req.params.id} actualizado a estado ${Estado || id_estado}.`,
+        mensaje: `Ticket ${req.params.id} actualizado a estado ${id_estado}.`,
         ticket: data
       });
     });
