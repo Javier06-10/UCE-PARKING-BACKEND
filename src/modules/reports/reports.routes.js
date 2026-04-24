@@ -4,7 +4,9 @@ import {
   reporteGeneral,
   generarYGuardar,
   listarReportes,
-  descargarReporteExcel
+  descargarReporteExcel,
+  previsualizarNuevo,
+  previsualizarExistente
 } from "./reports.controller.js";
 
 const router = express.Router();
@@ -16,6 +18,12 @@ router.get("/general", reporteGeneral);
 
 // GET  /api/reports           → listar reportes guardados
 router.get("/", listarReportes);
+
+// POST /api/reports/preview   → previsualizar antes de guardar
+router.post("/preview", previsualizarNuevo);
+
+// GET  /api/reports/:id/preview → previsualizar un reporte ya guardado
+router.get("/:id/preview", previsualizarExistente);
 
 // POST /api/reports           → generar y guardar reporte
 router.post("/", generarYGuardar);

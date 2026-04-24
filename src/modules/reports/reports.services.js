@@ -151,14 +151,14 @@ export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
 
 // ─── Guardar reporte en la BD ──────────────────────────────────────────────────
 export async function guardarReporte({ tipo, descripcion, datos, personaId, organizacion_id }) {
-  const safeDesc = (descripcion || `Reporte generado el ${new Date().toISOString()}`).substring(0, 500);
+  const safeDesc = (descripcion || `Reporte generado el ${new Date().toISOString()}`).substring(0, 250);
 
   const fullJsonString = JSON.stringify(datos);
-  const ruta = fullJsonString.length > 500
+  const ruta = fullJsonString.length > 250
     ? JSON.stringify({
         resumen: "Data truncada por limite de columna",
         periodo: datos.periodo || {},
-        preview: fullJsonString.substring(0, 200) + "..."
+        preview: fullJsonString.substring(0, 100) + "..."
       })
     : fullJsonString;
 

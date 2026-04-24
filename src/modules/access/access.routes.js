@@ -15,13 +15,18 @@ router.get("/historial", verifyToken, historial);
 
 // Control manual de barreras
 router.post('/open-main', verifyToken, (req, res) => {
-  sendCommand('open_main');
+  sendCommand('OPEN_MAIN');
   res.json({ ok: true, message: "Barrera principal abierta" });
 });
 
 router.post('/open-vip', verifyToken, (req, res) => {
-  sendCommand('open_vip');
+  sendCommand('OPEN_VIP');
   res.json({ ok: true, message: "Barrera VIP abierta" });
+});
+
+router.post('/open-exit', verifyToken, (req, res) => {
+  sendCommand('OPEN_EXIT'); 
+  res.json({ ok: true, message: "Barrera de salida abierta" });
 });
 
 export default router;

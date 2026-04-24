@@ -71,7 +71,7 @@ async function registrarEntrada({ placa, dispositivoEntradaId }) {
     });
   }
 
-  sendCommand("open_main");
+  sendCommand("OPEN_MAIN");
   return registro;
 }
 
@@ -102,7 +102,7 @@ async function registrarEntradaVisitante({ nombre, placa, dispositivoEntradaId, 
     organizacion_id: organizacion_id || 1
   });
 
-  sendCommand("open_main");
+  sendCommand("OPEN_MAIN");
   return registro;
 }
 
@@ -150,7 +150,7 @@ async function registrarSalida({ placa, dispositivoSalidaId }) {
       .eq("id_plaza", acceso.id_plaza);
   }
 
-  sendCommand("open_main");
+  sendCommand("OPEN_EXIT");
 
   if (global.io) {
     global.io.emit("access-event", {

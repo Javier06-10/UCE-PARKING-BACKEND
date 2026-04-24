@@ -40,6 +40,36 @@ export function initCronJobs() {
           }
         }
       }
+
+      // Expirar reservas_zona vencidas
+      const { data: expiradas_zona } = await supabase
+        .from("reserva_zona")
+        .select("id_reserva_zona, id_plaza_asignada, id_persona")
+        .eq("id_estado", 1)
+        .lt("fecha_hora_fin", now);
+
+      for (const rz of expiradas_zona ?? []) {
+        const { error: updRzError } = await supabase
+          .from("reserva_zona")
+          .update({ id_estado: 4 }) // Vencida
+          .eq("id_reserva_zona", rz.id_reserva_zona);
+
+        if (!updRzError) {
+          console.log(`[cron] ReservaZona ${rz.id_reserva_zona} expirada automaticamente.`);
+
+          if (rz.id_plaza_asignada) {
+            await supabase
+              .from("plaza")
+              .update({ id_estado: 1 }) // Libre
+              .eq("id_plaza", rz.id_plaza_asignada);
+          }
+
+          notifyUser(rz.id_persona, "RESERVA_ZONA_EXPIRADA", {
+            mensaje: "Tu reserva de zona ha vencido.",
+            reservaZonaId: rz.id_reserva_zona
+          });
+        }
+      }
     } catch (err) {
       console.error("[cron] Error en job de expiracion de reservas:", err);
     }

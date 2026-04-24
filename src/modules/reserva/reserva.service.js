@@ -37,7 +37,31 @@ export async function crearReserva(plazaId, userId, start, end) {
   }
   const { id_persona: personaId, organizacion_id } = usuarioRow;
 
-  // 2. Verificar solapamiento (NuevoInicio < FinExistente AND NuevoFin > InicioExistente)
+  // --- NUEVA VALIDACION: tipo_persona.puede_reservar ---
+  const { data: personaData } = await supabase
+    .from("persona")
+    .select("tipo_persona(puede_reservar)")
+    .eq("id_persona", personaId)
+    .maybeSingle();
+
+  if (personaData?.tipo_persona?.puede_reservar === false) {
+    throw new Error("Tu tipo de usuario no tiene permitido realizar reservas");
+  }
+  // ----------------------------------------------------
+
+  // 2. Verificar que la zona de la plaza esta activa
+  const { data: plazaZona } = await supabase
+    .from("plaza")
+    .select("id_plaza, zona ( id_estado )")
+    .eq("id_plaza", plazaId)
+    .maybeSingle();
+
+  if (!plazaZona) throw new Error("Plaza no encontrada.");
+  if (plazaZona.zona?.id_estado !== 1) {
+    throw new Error("La zona de esta plaza no esta disponible para reservas.");
+  }
+
+  // 3. Verificar solapamiento (NuevoInicio < FinExistente AND NuevoFin > InicioExistente)
   const { data: overlapping, error: checkError } = await supabase
     .from("reserva")
     .select("id_reserva")

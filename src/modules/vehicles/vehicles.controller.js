@@ -12,10 +12,11 @@ import {
 export async function listVehicles(req, res) {
   try {
     const { page = 1, limit = 20, search = "" } = req.query;
-    const persona_id = req.user?.id;
+    // id_persona FK in vehiculo — comes from req.user.perfil populated by middleware
+    const persona_id = req.user?.perfil?.persona?.id_persona;
 
     if (!persona_id) {
-      return res.status(401).json({ ok: false, error: "Usuario no autenticado." });
+      return res.status(401).json({ ok: false, error: "Usuario no autenticado o sin perfil." });
     }
 
     const result = await getAllVehicles({ page: Number(page), limit: Number(limit), search, persona_id });
@@ -50,10 +51,12 @@ export async function getByPlaca(req, res) {
 }
 
 // POST /api/vehicles
-// Body: { placa, id_modelo, id_color, id_persona, organizacion_id, id_estado?, id_tipo? }
+// Body: { placa, id_modelo, id_color, id_persona, organizacion_id?, id_estado?, id_tipo? }
 export async function createVehicleHandler(req, res) {
   try {
-    const { placa, id_modelo, id_color, id_persona, organizacion_id, id_estado, id_tipo } = req.body;
+    const { placa, id_modelo, id_color, id_persona, id_estado, id_tipo } = req.body;
+    // organizacion_id from body or fallback to the authenticated user's org
+    const organizacion_id = req.body.organizacion_id ?? req.user?.perfil?.organizacion_id;
     const data = await createVehicle({ placa, id_modelo, id_color, id_persona, organizacion_id, id_estado, id_tipo });
     res.status(201).json({ ok: true, data });
   } catch (error) {
