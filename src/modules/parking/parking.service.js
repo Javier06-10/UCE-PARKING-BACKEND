@@ -6,26 +6,58 @@ const ESTADO_LIBRE = 1;
 const ESTADO_OCUPADA = 2;
 
 async function updatePlazas(plazas) {
-  for (const plaza of plazas) {
-    const nuevoEstado = plaza.occupied ? ESTADO_OCUPADA : ESTADO_LIBRE;
+  // ─── Mapeo de Sensores (Arduino 1-15) ───────────────────────────────────────
+  // 1-10: Parqueo General (id_tipo = 1)
+  // 11-15: Administrativo (id_tipo = 3)
+
+  // Traer plazas reales de la BD para asegurar que usamos los IDs correctos
+  const { data: general } = await supabase
+    .from("plaza")
+    .select("id_plaza, numero_plaza")
+    .eq("id_tipo", 1)
+    .order("numero_plaza", { ascending: true });
+
+  const { data: admin } = await supabase
+    .from("plaza")
+    .select("id_plaza, numero_plaza")
+    .eq("id_tipo", 3)
+    .order("numero_plaza", { ascending: true });
+
+  // Crear array de mapeo (índice 0-9 = General, 10-14 = Admin)
+  const mappedIds = [
+    ...(general || []).slice(0, 10),
+    ...(admin || []).slice(0, 5)
+  ].map(p => p.id_plaza);
+
+  for (let i = 0; i < plazas.length; i++) {
+    const sensorData = plazas[i];
+    const dbId = mappedIds[i];
+
+    if (!dbId) continue; // Si no hay plaza configurada para este sensor, ignorar
+
+    const nuevoEstado = sensorData.occupied ? ESTADO_OCUPADA : ESTADO_LIBRE;
 
     const { data: plazaActual } = await supabase
       .from("plaza")
       .select("id_estado")
-      .eq("id_plaza", plaza.id)
+      .eq("id_plaza", dbId)
       .single();
 
     if (!plazaActual || plazaActual.id_estado === nuevoEstado) continue;
 
+    // Actualizar estado en BD
     await supabase
       .from("plaza")
       .update({ id_estado: nuevoEstado })
-      .eq("id_plaza", plaza.id);
+      .eq("id_plaza", dbId);
 
-    if (plaza.occupied) {
-      await asignarPlaza(plaza);
+    // Preparar objeto para funciones de asignación
+    const plazaObj = { id: dbId, occupied: sensorData.occupied };
+
+    if (sensorData.occupied) {
+      await asignarPlaza(plazaObj);
     } else {
-      await cerrarRegistroPlaza(plaza);
+      await cerrarRegistroPlaza(plazaObj);
     }
   }
 }

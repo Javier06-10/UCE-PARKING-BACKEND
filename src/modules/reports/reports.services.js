@@ -1,15 +1,20 @@
 import supabase from "../../config/supabase.js";
 
 // ─── Reporte General (Ocupacion y Actividad) ───────────────────────────────────
-export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {}) {
+export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId, organizacionId } = {}) {
   if (!fechaDesde || !fechaHasta) {
     throw new Error("fechaDesde y fechaHasta son requeridos");
+  }
+
+  if (!organizacionId) {
+    throw new Error("organizacionId es requerido para filtrar el reporte");
   }
 
   // 1. Registros de acceso
   let queryAccesos = supabase
     .from("acceso")
     .select("id_registro, entrada_at, salida_at, id_plaza")
+    .eq("organizacion_id", organizacionId)
     .gte("entrada_at", fechaDesde)
     .lte("entrada_at", fechaHasta)
     .order("entrada_at", { ascending: true });
@@ -23,7 +28,8 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
     const { data: plazasZona } = await supabase
       .from("plaza")
       .select("id_plaza")
-      .eq("id_zona", zonaId);
+      .eq("id_zona", zonaId)
+      .eq("organizacion_id", organizacionId);
     const plazasDeLaZona = new Set((plazasZona || []).map(p => p.id_plaza));
     registrosFiltrados = registros.filter(r => r.id_plaza && plazasDeLaZona.has(r.id_plaza));
   }
@@ -70,12 +76,14 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
   const { count: ticketsEmitidos } = await supabase
     .from("ticket")
     .select("id_ticket", { count: "exact", head: true })
+    .eq("organizacion_id", organizacionId)
     .gte("fecha_hora_emision", fechaDesde)
     .lte("fecha_hora_emision", fechaHasta);
 
   const { count: ticketsActivos } = await supabase
     .from("ticket")
     .select("id_ticket", { count: "exact", head: true })
+    .eq("organizacion_id", organizacionId)
     .gte("fecha_hora_emision", fechaDesde)
     .lte("fecha_hora_emision", fechaHasta)
     .eq("id_estado", 1);
@@ -84,6 +92,7 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
   const { count: nuevosVehiculos } = await supabase
     .from("vehiculo")
     .select("id_vehiculo", { count: "exact", head: true })
+    .eq("organizacion_id", organizacionId)
     .gte("created_at", fechaDesde)
     .lte("created_at", fechaHasta);
 
@@ -91,6 +100,7 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
   const { count: nuevosUsuarios } = await supabase
     .from("usuario")
     .select("id", { count: "exact", head: true })
+    .eq("organizacion_id", organizacionId)
     .gte("created_at", fechaDesde)
     .lte("created_at", fechaHasta);
 
@@ -98,6 +108,7 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
   const { count: totalReservas } = await supabase
     .from("reserva")
     .select("id_reserva", { count: "exact", head: true })
+    .eq("organizacion_id", organizacionId)
     .gte("created_at", fechaDesde)
     .lte("created_at", fechaHasta);
 
@@ -125,9 +136,13 @@ export async function getReporteGeneral({ fechaDesde, fechaHasta, zonaId } = {})
 }
 
 // ─── Reporte de Eventos ───────────────────────────────────────────────────────
-export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
+export async function getReporteEventos({ fechaDesde, fechaHasta, organizacionId } = {}) {
   if (!fechaDesde || !fechaHasta) {
     throw new Error("fechaDesde y fechaHasta son requeridos");
+  }
+
+  if (!organizacionId) {
+    throw new Error("organizacionId es requerido");
   }
 
   const { data: eventos, error } = await supabase
@@ -137,6 +152,7 @@ export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
       tipo_evento ( id_tipo, nombre ),
       origen_evento ( id_origen, nombre )
     `)
+    .eq("organizacion_id", organizacionId)
     .gte("created_at", fechaDesde)
     .lte("created_at", fechaHasta)
     .order("created_at", { ascending: false });
@@ -153,14 +169,7 @@ export async function getReporteEventos({ fechaDesde, fechaHasta } = {}) {
 export async function guardarReporte({ tipo, descripcion, datos, personaId, organizacion_id }) {
   const safeDesc = (descripcion || `Reporte generado el ${new Date().toISOString()}`).substring(0, 250);
 
-  const fullJsonString = JSON.stringify(datos);
-  const ruta = fullJsonString.length > 250
-    ? JSON.stringify({
-        resumen: "Data truncada por limite de columna",
-        periodo: datos.periodo || {},
-        preview: fullJsonString.substring(0, 100) + "..."
-      })
-    : fullJsonString;
+  const ruta = JSON.stringify(datos);
 
   // Buscar id del tipo_reporte por nombre
   const { data: tipoRow } = await supabase

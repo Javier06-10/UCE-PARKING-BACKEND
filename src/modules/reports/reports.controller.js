@@ -7,14 +7,38 @@ import {
 } from "./reports.services.js";
 import { buildReporteExcel } from "./excel.generator.js";
 
+// ─── Helper: obtener nivel de privilegio y orgId ──────────────────────────────
+async function getNivelPrivilegio(userId) {
+  const { data: usuario } = await supabase
+    .from("usuario")
+    .select("id_persona, organizacion_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!usuario) return { nivel: 1, orgId: null };
+
+  const { data: empleado } = await supabase
+    .from("empleado")
+    .select("cargo(nivel_privilegio)")
+    .eq("id_persona", usuario.id_persona)
+    .maybeSingle();
+
+  return {
+    nivel: empleado?.cargo?.nivel_privilegio ?? 1,
+    orgId: usuario.organizacion_id
+  };
+}
+
 // GET /api/reports/general?fechaDesde=2026-01-01&fechaHasta=2026-01-31&zonaId=1
 export async function reporteGeneral(req, res) {
   try {
     const { fechaDesde, fechaHasta, zonaId } = req.query;
+    const { nivel, orgId } = await getNivelPrivilegio(req.user.id);
     const data = await getReporteGeneral({
       fechaDesde,
       fechaHasta,
-      zonaId: zonaId ? Number(zonaId) : undefined
+      zonaId: zonaId ? Number(zonaId) : undefined,
+      organizacionId: orgId
     });
     res.json({ ok: true, ...data });
   } catch (error) {
@@ -28,14 +52,20 @@ export async function generarYGuardar(req, res) {
   try {
     const { fechaDesde, fechaHasta, zonaId, descripcion, tipo } = req.body;
 
+    const { nivel, orgId } = await getNivelPrivilegio(req.user.id);
     let reporte = null;
     if (tipo === "EVENTOS") {
-      reporte = await getReporteEventos({ fechaDesde, fechaHasta });
+      reporte = await getReporteEventos({
+        fechaDesde,
+        fechaHasta,
+        organizacionId: orgId
+      });
     } else {
       reporte = await getReporteGeneral({
         fechaDesde,
         fechaHasta,
-        zonaId: zonaId ? Number(zonaId) : undefined
+        zonaId: zonaId ? Number(zonaId) : undefined,
+        organizacionId: orgId
       });
     }
 
@@ -86,16 +116,21 @@ export async function listarReportes(req, res) {
 // POST /api/reports/preview
 export async function previsualizarNuevo(req, res) {
   try {
-    const { fechaDesde, fechaHasta, zonaId, tipo } = req.body;
+    const { nivel, orgId } = await getNivelPrivilegio(req.user.id);
     let data = null;
 
     if (tipo === "EVENTOS") {
-      data = await getReporteEventos({ fechaDesde, fechaHasta });
+      data = await getReporteEventos({
+        fechaDesde,
+        fechaHasta,
+        organizacionId: orgId
+      });
     } else {
       data = await getReporteGeneral({
         fechaDesde,
         fechaHasta,
-        zonaId: zonaId ? Number(zonaId) : undefined
+        zonaId: zonaId ? Number(zonaId) : undefined,
+        organizacionId: orgId
       });
     }
 
