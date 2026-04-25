@@ -116,6 +116,7 @@ export async function listarReportes(req, res) {
 // POST /api/reports/preview
 export async function previsualizarNuevo(req, res) {
   try {
+    const { fechaDesde, fechaHasta, tipo, zonaId } = req.body;
     const { nivel, orgId } = await getNivelPrivilegio(req.user.id);
     let data = null;
 
@@ -149,7 +150,7 @@ export async function previsualizarExistente(req, res) {
     const { data: reporteRow, error } = await supabase
       .from("reporte")
       .select(`
-        id_reporte, ruta_adjunto, descripcion, created_at,
+        id_reporte, ruta_adjunto, descripcion, created_at, organizacion_id,
         tipo_reporte ( id_tipo, nombre )
       `)
       .eq("id_reporte", id)
@@ -180,9 +181,17 @@ export async function previsualizarExistente(req, res) {
       }
 
       if (tipoNombre === "EVENTOS") {
-        reporteData = await getReporteEventos({ fechaDesde: dDesde, fechaHasta: dHasta });
+        reporteData = await getReporteEventos({ 
+          fechaDesde: dDesde, 
+          fechaHasta: dHasta, 
+          organizacionId: reporteRow.organizacion_id 
+        });
       } else {
-        reporteData = await getReporteGeneral({ fechaDesde: dDesde, fechaHasta: dHasta });
+        reporteData = await getReporteGeneral({ 
+          fechaDesde: dDesde, 
+          fechaHasta: dHasta, 
+          organizacionId: reporteRow.organizacion_id 
+        });
       }
     }
 
@@ -207,7 +216,7 @@ export async function descargarReporteExcel(req, res) {
     const { data: reporteRow, error } = await supabase
       .from("reporte")
       .select(`
-        id_reporte, ruta_adjunto, descripcion, created_at,
+        id_reporte, ruta_adjunto, descripcion, created_at, organizacion_id,
         tipo_reporte ( id_tipo, nombre )
       `)
       .eq("id_reporte", id)
@@ -239,9 +248,17 @@ export async function descargarReporteExcel(req, res) {
       }
 
       if (tipoNombre === "EVENTOS") {
-        reporteData = await getReporteEventos({ fechaDesde: dDesde, fechaHasta: dHasta });
+        reporteData = await getReporteEventos({ 
+          fechaDesde: dDesde, 
+          fechaHasta: dHasta, 
+          organizacionId: reporteRow.organizacion_id 
+        });
       } else {
-        reporteData = await getReporteGeneral({ fechaDesde: dDesde, fechaHasta: dHasta });
+        reporteData = await getReporteGeneral({ 
+          fechaDesde: dDesde, 
+          fechaHasta: dHasta, 
+          organizacionId: reporteRow.organizacion_id 
+        });
       }
     }
 
@@ -252,6 +269,8 @@ export async function descargarReporteExcel(req, res) {
 
   } catch (error) {
     console.error("[reports] Error al descargar reporte:", error);
-    res.status(500).json({ ok: false, error: "No se pudo generar el documento Excel" });
+    if (!res.headersSent) {
+      res.status(500).json({ ok: false, error: "No se pudo generar el documento Excel: " + error.message });
+    }
   }
 }

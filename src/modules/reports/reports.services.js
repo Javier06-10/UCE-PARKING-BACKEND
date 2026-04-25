@@ -169,7 +169,18 @@ export async function getReporteEventos({ fechaDesde, fechaHasta, organizacionId
 export async function guardarReporte({ tipo, descripcion, datos, personaId, organizacion_id }) {
   const safeDesc = (descripcion || `Reporte generado el ${new Date().toISOString()}`).substring(0, 250);
 
-  const ruta = JSON.stringify(datos);
+  let ruta = JSON.stringify(datos);
+
+  // FIX: Si el JSON es muy largo para la columna varchar(255) de la BD (Supabase),
+  // guardamos un placeholder para que el controller lo recalcule al previsualizar/descargar.
+  if (ruta.length > 250) {
+    console.log(`[reports] Datos demasiado largos (${ruta.length} chars), truncando para evitar error DB.`);
+    ruta = JSON.stringify({
+      resumen: "Data truncada por limite de columna",
+      periodo: datos.periodo || { desde: null, hasta: null },
+      organizacionId: organizacion_id
+    });
+  }
 
   // Buscar id del tipo_reporte por nombre
   const { data: tipoRow } = await supabase

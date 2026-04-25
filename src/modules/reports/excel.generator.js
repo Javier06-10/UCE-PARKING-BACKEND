@@ -5,10 +5,16 @@ export async function buildReporteExcel(tipo, reportData, streamObj) {
   workbook.creator = "UCE Parking System";
   workbook.created = new Date();
 
+  // Robustness check
+  const safeData = reportData || {};
+  if (!safeData.periodo) {
+    safeData.periodo = { desde: new Date(), hasta: new Date() };
+  }
+
   if (tipo === "EVENTOS") {
-    buildEventosSheet(workbook, reportData);
+    buildEventosSheet(workbook, safeData);
   } else {
-    buildGeneralSheet(workbook, reportData);
+    buildGeneralSheet(workbook, safeData);
   }
 
   await workbook.xlsx.write(streamObj);
