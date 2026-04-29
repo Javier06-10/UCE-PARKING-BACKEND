@@ -2,7 +2,8 @@ import {
   registrarEntrada,
   registrarEntradaVisitante,
   registrarSalida,
-  getHistorialAccesos
+  getHistorialAccesos,
+  validarEntradaPorCodigo
 } from "./access.services.js";
 
 async function entrada(req, res) {
@@ -56,4 +57,18 @@ async function historial(req, res) {
   }
 }
 
-export { entrada, entradaVisitante, salida, historial };
+async function validarCodigo(req, res) {
+  try {
+    const { codigo } = req.body;
+    if (!codigo) {
+      return res.status(400).json({ ok: false, error: "El código de reserva es requerido" });
+    }
+    const resultado = await validarEntradaPorCodigo(codigo);
+    res.json({ ok: true, resultado });
+  } catch (error) {
+    console.error("[access] validarCodigo:", error.message);
+    res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+export { entrada, entradaVisitante, salida, historial, validarCodigo };

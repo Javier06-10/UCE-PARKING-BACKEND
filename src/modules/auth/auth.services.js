@@ -54,8 +54,8 @@ export const getOrganizacionesMovil = async () => {
 };
 
 // ─── Registro de usuario móvil ────────────────────────────────────────────────
-// El trigger fn_onboarding_nuevo_usuario en auth.users crea persona + usuario + empleado
-// a partir de raw_user_meta_data. Solo necesitamos pasar los datos correctos a signUp.
+// Flujo correcto: auth.users → persona → usuario (solo 2 tablas propias)
+// NO se crea empleado ni estudiante en el registro — eso se gestiona aparte.
 export const registroService = async ({
   email,
   password,
@@ -66,6 +66,7 @@ export const registroService = async ({
   sexo,
   fecha_nacimiento,
   direccion,
+  id_tipo_persona,
   organizacion_id
 }) => {
   if (!email || !password || !nombre || !apellido || !organizacion_id) {
@@ -84,40 +85,61 @@ export const registroService = async ({
     throw new Error("Esta organizacion no acepta registros desde la app movil");
   }
 
-  // 2. Crear usuario en Supabase Auth con metadata completa.
-  //    El trigger fn_onboarding_nuevo_usuario lee estos campos para crear
-  //    persona, usuario (organizacion_id) y empleado automáticamente.
-  const { data: authData, error: authError } = await supabase.auth.signUp({
+  // 2. Crear usuario en Supabase Auth (solo autenticación)
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
     email,
     password,
-    options: {
-      data: {
-        tipo_usuario:    'movil',
-        nombre,
-        apellido,
-        org_id:          Number(organizacion_id),
-        ...(telefono        ? { telefono }        : {}),
-        ...(sexo            ? { sexo }            : {}),
-        ...(fecha_nacimiento ? { fecha_nacimiento } : {}),
-      }
-    }
+    email_confirm: true
   });
 
   if (authError) throw new Error("Error al crear cuenta: " + authError.message);
 
-  const authUser = authData.user;
+  const userId = authData.user.id;
 
-  // 3. Actualizar persona con campos extra que el trigger no maneja
-  //    (cedula, direccion). id_persona = auth.uid() según el trigger.
-  if (authUser && (cedula || direccion)) {
-    const extras = {};
-    if (cedula)    extras.cedula    = cedula;
-    if (direccion) extras.direccion = direccion;
-    await supabase.from("persona").update(extras).eq("id_persona", authUser.id);
+  // 3. Crear registro en tabla PERSONA (datos personales)
+  const { error: personaError } = await supabase
+    .from("persona")
+    .insert({
+      id_persona: userId,
+      nombre,
+      apellido,
+      email,
+      telefono: telefono || null,
+      cedula: cedula || null,
+      sexo: sexo || null,
+      fecha_nacimiento: fecha_nacimiento || null,
+      direccion: direccion || null,
+      id_tipo_persona: id_tipo_persona || null
+    });
+
+  if (personaError) {
+    // Rollback: eliminar auth user si falla la persona
+    await supabase.auth.admin.deleteUser(userId);
+    throw new Error("Error al crear persona: " + personaError.message);
+  }
+
+  // 4. Crear registro en tabla USUARIO (vincula auth.users ↔ persona)
+  const { error: usuarioError } = await supabase
+    .from("usuario")
+    .insert({
+      id: userId,
+      id_persona: userId,
+      rol_id: 6,            // Rol: Usuario Móvil
+      id_tipo_usuario: 2,   // Tipo: Móvil
+      organizacion_id: Number(organizacion_id),
+      id_estado: 1          // Estado: Activo
+    });
+
+  if (usuarioError) {
+    // Rollback: eliminar persona + auth user si falla el usuario
+    await supabase.from("persona").delete().eq("id_persona", userId);
+    await supabase.auth.admin.deleteUser(userId);
+    throw new Error("Error al crear usuario: " + usuarioError.message);
   }
 
   return {
     ok: true,
-    message: "Cuenta creada exitosamente. Revisa tu email para confirmar tu cuenta."
+    message: "Cuenta creada exitosamente.",
+    user_id: userId
   };
 };

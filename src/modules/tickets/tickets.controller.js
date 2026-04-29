@@ -51,7 +51,8 @@ export async function createTicket(req, res) {
       id_modelo_capturado,
       plazaAsignada,
       organizacion_id,
-      descripcion
+      descripcion,
+      id_codigo_reserva
     } = req.body;
 
     const data = await emitirTicket({
@@ -65,7 +66,8 @@ export async function createTicket(req, res) {
       id_modelo_capturado,
       plazaAsignada,
       organizacion_id,
-      descripcion
+      descripcion,
+      id_codigo_reserva
     });
 
     import("../../core/notifications.service.js").then(({ notifyAdmin }) => {

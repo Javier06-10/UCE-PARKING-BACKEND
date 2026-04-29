@@ -1,7 +1,7 @@
 import express from "express";
 import { sendCommand } from "../../config/serial.js";
 import { verifyToken } from "../../middlewares/auth.middleware.js";
-import { entrada, entradaVisitante, salida, historial } from "./access.controller.js";
+import { entrada, entradaVisitante, salida, historial, validarCodigo } from "./access.controller.js";
 
 const router = express.Router();
 
@@ -12,6 +12,9 @@ router.post('/entrada', entrada);
 router.post("/entrada-visitante", verifyToken, entradaVisitante);
 router.post("/salida", verifyToken, salida);
 router.get("/historial", verifyToken, historial);
+
+// Validar código de reserva (garita / panel)
+router.post("/validar-codigo", verifyToken, validarCodigo);
 
 // Control manual de barreras
 router.post('/open-main', verifyToken, (req, res) => {

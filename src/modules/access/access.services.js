@@ -199,4 +199,28 @@ async function getHistorialAccesos({ page = 1, limit = 20, fechaDesde, fechaHast
   return { data: registros, total: count, page, limit };
 }
 
-export { registrarEntrada, registrarEntradaVisitante, registrarSalida, getHistorialAccesos };
+// ─── Validar entrada por código de reserva ────────────────────────────────────
+// Llama a la RPC `validar_entrada_por_codigo` de la migración.
+// Retorna JSON con: valido, mensaje, datos del usuario, zona, vigencia.
+async function validarEntradaPorCodigo(codigo) {
+  if (!codigo || typeof codigo !== "string" || codigo.trim().length === 0) {
+    throw new Error("El código de reserva es requerido");
+  }
+
+  const { data, error } = await supabase.rpc("validar_entrada_por_codigo", {
+    codigo: codigo.trim().toUpperCase()
+  });
+
+  if (error) throw new Error(`Error al validar código: ${error.message}`);
+  if (!data) throw new Error("No se recibió respuesta de la validación");
+
+  return data;
+}
+
+export {
+  registrarEntrada,
+  registrarEntradaVisitante,
+  registrarSalida,
+  getHistorialAccesos,
+  validarEntradaPorCodigo
+};

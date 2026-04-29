@@ -26,13 +26,13 @@ export const registro = async (req, res, next) => {
     const {
       email, password, nombre, apellido,
       telefono, cedula, sexo, fecha_nacimiento,
-      direccion, organizacion_id
+      direccion, id_tipo_persona, organizacion_id
     } = req.body;
 
     const result = await registroService({
       email, password, nombre, apellido,
       telefono, cedula, sexo, fecha_nacimiento,
-      direccion, organizacion_id
+      direccion, id_tipo_persona, organizacion_id
     });
 
     res.status(201).json(result);

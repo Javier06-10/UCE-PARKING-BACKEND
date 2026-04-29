@@ -55,16 +55,16 @@ router.post("/login", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/auth/registro
-// Registro de nuevos usuarios móviles (Estudiantes, Docentes, etc.)
+// Registro de nuevos usuarios móviles
+// Flujo correcto: auth.users → persona → usuario (solo 2 tablas propias)
+// NO se crea empleado ni estudiante en el registro — eso se gestiona aparte.
 // ─────────────────────────────────────────────────────────────
 router.post("/registro", async (req, res) => {
   try {
     const {
       email, password,
       nombre, apellido, telefono, cedula, sexo, fecha_nacimiento,
-      id_tipo_persona, organizacion_id,
-      // Campos específicos si es estudiante
-      numero_carnet, id_carrera, id_facultad, año_academico
+      id_tipo_persona, organizacion_id
     } = req.body;
 
     if (!email || !password || !nombre || !apellido || !organizacion_id)
@@ -82,7 +82,7 @@ router.post("/registro", async (req, res) => {
     if (!org.acepta_reservas_movil)
       return res.status(403).json({ ok: false, error: "Esta organización no permite registro desde la app móvil" });
 
-    // 2. Crear usuario en Supabase Auth
+    // 2. Crear usuario en Supabase Auth (solo autenticación)
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password,
@@ -94,13 +94,17 @@ router.post("/registro", async (req, res) => {
 
     const userId = authData.user.id;
 
-    // 3. Crear persona
+    // 3. Crear registro en tabla PERSONA (datos personales)
     const { data: persona, error: personaError } = await supabase
       .from("persona")
       .insert({
         id_persona: userId,
-        nombre, apellido, email, telefono: telefono || null,
-        cedula: cedula || null, sexo: sexo || null,
+        nombre,
+        apellido,
+        email,
+        telefono: telefono || null,
+        cedula: cedula || null,
+        sexo: sexo || null,
         fecha_nacimiento: fecha_nacimiento || null,
         id_tipo_persona: id_tipo_persona || null
       })
@@ -108,36 +112,28 @@ router.post("/registro", async (req, res) => {
       .single();
 
     if (personaError) {
+      // Rollback: eliminar auth user si falla la persona
       await supabase.auth.admin.deleteUser(userId);
-      return res.status(400).json({ ok: false, error: personaError.message });
+      return res.status(400).json({ ok: false, error: "Error al crear persona: " + personaError.message });
     }
 
-    // 4. Crear usuario con rol Móvil (id_rol = 6)
+    // 4. Crear registro en tabla USUARIO (vincula auth.users ↔ persona)
     const { error: usuarioError } = await supabase
       .from("usuario")
       .insert({
         id: userId,
-        rol_id: 6, // Usuario Móvil
-        id_tipo_usuario: 2, // Móvil
+        id_persona: userId,
+        rol_id: 6,            // Rol: Usuario Móvil
+        id_tipo_usuario: 2,   // Tipo: Móvil
         organizacion_id,
-        id_estado: 1 // Activo
+        id_estado: 1          // Estado: Activo
       });
 
     if (usuarioError) {
+      // Rollback: eliminar persona + auth user si falla el usuario
+      await supabase.from("persona").delete().eq("id_persona", userId);
       await supabase.auth.admin.deleteUser(userId);
-      return res.status(400).json({ ok: false, error: usuarioError.message });
-    }
-
-    // 5. Si es estudiante (id_tipo_persona = 1), crear registro en tabla estudiante
-    if (id_tipo_persona === 1 && (numero_carnet || id_carrera)) {
-      await supabase.from("estudiante").insert({
-        id_persona: userId,
-        numero_carnet: numero_carnet || null,
-        id_carrera: id_carrera || null,
-        id_facultad: id_facultad || null,
-        año_academico: año_academico || null,
-        organizacion_id
-      });
+      return res.status(400).json({ ok: false, error: "Error al crear usuario: " + usuarioError.message });
     }
 
     res.status(201).json({

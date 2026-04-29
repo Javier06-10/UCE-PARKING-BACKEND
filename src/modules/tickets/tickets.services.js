@@ -4,6 +4,7 @@ const TICKET_SELECT = `
   id_ticket, placa_capturada, fecha_hora_emision, fecha_hora_vencimiento,
   id_plaza_asignada, id_estado, qr_token, organizacion_id,
   visitante_nombre, visitante_apellido, visitante_telefono, visitante_sexo, descripcion,
+  id_codigo_reserva,
   estado_ticket ( id_estado, nombre ),
   marca ( id_marca, nombre ),
   modelo ( id_modelo, nombre ),
@@ -57,7 +58,8 @@ export async function emitirTicket({
   id_modelo_capturado,
   plazaAsignada,
   organizacion_id,
-  descripcion
+  descripcion,
+  id_codigo_reserva
 }) {
   if (!placa) throw new Error("La placa es requerida para emitir un ticket");
 
@@ -80,7 +82,8 @@ export async function emitirTicket({
       id_color_capturado: id_color_capturado || null,
       id_marca_capturada: id_marca_capturada || null,
       id_modelo_capturado: id_modelo_capturado || null,
-      descripcion: descripcion || null
+      descripcion: descripcion || null,
+      id_codigo_reserva: id_codigo_reserva || null
     })
     .select()
     .single();
