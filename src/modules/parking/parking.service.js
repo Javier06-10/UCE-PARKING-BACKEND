@@ -63,11 +63,16 @@ async function updatePlazas(plazas) {
 }
 
 async function asignarPlaza(plaza) {
+  // Limitar a accesos de los últimos 5 minutos para evitar asignar al vehículo incorrecto
+  // cuando varios vehículos entran en secuencia rápida
+  const cincoMinAtras = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
   const { data: accesoAbierto } = await supabase
     .from("acceso")
     .select("id_registro, id_vehiculo")
     .is("salida_at", null)
     .is("id_plaza", null)
+    .gte("entrada_at", cincoMinAtras)
     .order("entrada_at", { ascending: false })
     .limit(1)
     .single();

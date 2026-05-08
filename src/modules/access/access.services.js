@@ -2,6 +2,7 @@ import supabase from "../../config/supabase.js";
 import { sendCommand } from "../../config/serial.js";
 
 // ─── Buscar o crear vehículo por placa ────────────────────────────────────────
+// Solo lo usa el flujo de garita (entrada-visitante), nunca la cámara.
 async function resolverVehiculo(placa, organizacion_id) {
   const { data: vehiculo } = await supabase
     .from("vehiculo")
@@ -32,13 +33,72 @@ async function getOrganizacionDeDispositivo(dispositivoId) {
   return data?.organizacion_id ?? null;
 }
 
-// ─── Registrar entrada ────────────────────────────────────────────────────────
+// ─── Normalizar placa (quitar espacios, guiones, convertir a mayúsculas) ──────
+function normalizarPlaca(placa) {
+  return placa.replace(/[\s\-]/g, "").toUpperCase();
+}
+
+// ─── Buscar vehículo por placa (solo lectura, no crea) ────────────────────────
+// Busca la placa normalizada (sin espacios) para que coincida sin importar formato
+async function buscarVehiculo(placa) {
+  const placaNorm = normalizarPlaca(placa);
+
+  // Primero intentar match exacto
+  const { data: vehiculo } = await supabase
+    .from("vehiculo")
+    .select("id_vehiculo, placa, id_persona")
+    .eq("placa", placa)
+    .maybeSingle();
+
+  if (vehiculo) return vehiculo;
+
+  // Si no hay match exacto, buscar todas las placas y comparar normalizadas
+  const { data: todos } = await supabase
+    .from("vehiculo")
+    .select("id_vehiculo, placa, id_persona");
+
+  if (todos) {
+    const encontrado = todos.find(v => normalizarPlaca(v.placa) === placaNorm);
+    if (encontrado) {
+      console.log(`🔍 Placa normalizada: cámara envió "${placa}" → matcheó con "${encontrado.placa}" en BD`);
+      return encontrado;
+    }
+  }
+
+  return null; // no existe
+}
+
+// ─── Registrar entrada (cámara) ───────────────────────────────────────────────
+// Si el vehículo NO está registrado → se niega la entrada y se notifica a garita
 async function registrarEntrada({ placa, dispositivoEntradaId }) {
   if (!placa) throw new Error("Placa requerida");
+  placa = placa.trim().toUpperCase();
 
   const organizacion_id = await getOrganizacionDeDispositivo(dispositivoEntradaId);
-  const vehiculo = await resolverVehiculo(placa, organizacion_id);
 
+  // Solo buscar, NO crear automáticamente
+  const vehiculo = await buscarVehiculo(placa);
+
+  // ── Vehículo no registrado: negar entrada ──
+  if (!vehiculo) {
+    // Notificar a garita vía WebSocket para que decida (emitir ticket o ignorar)
+    if (global.io) {
+      global.io.emit("entrada-denegada", {
+        placa,
+        motivo: "VEHICULO_NO_REGISTRADO",
+        mensaje: `Vehículo con placa ${placa} no está registrado en el sistema`,
+        timestamp: new Date()
+      });
+    }
+
+    console.log(`🚫 Entrada denegada — placa ${placa} no registrada`);
+
+    const error = new Error(`Vehículo con placa ${placa} no está registrado. Debe acercarse a garita para emisión de ticket.`);
+    error.code = "VEHICULO_NO_REGISTRADO";
+    throw error;
+  }
+
+  // ── Vehículo ya está dentro ──
   const { data: accesoActivo } = await supabase
     .from("acceso")
     .select("id_registro")
@@ -50,6 +110,7 @@ async function registrarEntrada({ placa, dispositivoEntradaId }) {
     throw new Error("Vehículo ya está dentro del parqueadero");
   }
 
+  // ── Registrar acceso ──
   const { data: registro, error: accesoError } = await supabase
     .from("acceso")
     .insert({
@@ -95,12 +156,22 @@ async function registrarEntradaVisitante({ nombre, placa, dispositivoEntradaId, 
 
   if (error) throw error;
 
-  await supabase.from("evento").insert({
-    fecha_hora: new Date(),
-    descripcion: `Visitante autorizado. Nombre: ${nombre || "N/A"}. Motivo: ${motivo || "No especificado"}`,
-    id_persona: adminPersonaId,
-    organizacion_id: organizacion_id || 1
-  });
+  if (adminPersonaId) {
+    await supabase.from("evento").insert({
+      fecha_hora:      new Date(),
+      descripcion:     `Visitante autorizado. Nombre: ${nombre || "N/A"}. Motivo: ${motivo || "No especificado"}`,
+      id_persona:      adminPersonaId,
+      organizacion_id: organizacion_id || 1
+    });
+  }
+
+  if (global.io) {
+    global.io.emit("access-event", {
+      type: "ENTRADA",
+      placa: vehiculo.placa,
+      timestamp: registro.entrada_at
+    });
+  }
 
   sendCommand("OPEN_MAIN");
   return registro;

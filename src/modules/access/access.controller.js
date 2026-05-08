@@ -13,6 +13,16 @@ async function entrada(req, res) {
     res.json({ ok: true, registro });
   } catch (error) {
     console.error("[access] entrada:", error.message);
+
+    // Vehículo no registrado → 403 (entrada denegada, debe ir a garita)
+    if (error.code === "VEHICULO_NO_REGISTRADO") {
+      return res.status(403).json({
+        ok: false,
+        code: "VEHICULO_NO_REGISTRADO",
+        error: error.message
+      });
+    }
+
     res.status(500).json({ ok: false, error: error.message });
   }
 }
