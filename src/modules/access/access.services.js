@@ -1,8 +1,10 @@
+// src/modules/access/access.services.js
+// CAMBIO: validarEntradaPorCodigo usa p_codigo (nombre correcto del parámetro en BD)
+// CAMBIO: validarEntradaPorCodigo retorna tickets_emitidos y capacidad (nueva versión RPC)
+
 import supabase from "../../config/supabase.js";
 import { sendCommand } from "../../config/serial.js";
 
-// ─── Buscar o crear vehículo por placa ────────────────────────────────────────
-// Solo lo usa el flujo de garita (entrada-visitante), nunca la cámara.
 async function resolverVehiculo(placa, organizacion_id) {
   const { data: vehiculo } = await supabase
     .from("vehiculo")
@@ -22,7 +24,6 @@ async function resolverVehiculo(placa, organizacion_id) {
   return nuevo;
 }
 
-// ─── Obtener organizacion_id desde el dispositivo ────────────────────────────
 async function getOrganizacionDeDispositivo(dispositivoId) {
   if (!dispositivoId) return null;
   const { data } = await supabase
@@ -33,17 +34,13 @@ async function getOrganizacionDeDispositivo(dispositivoId) {
   return data?.organizacion_id ?? null;
 }
 
-// ─── Normalizar placa (quitar espacios, guiones, convertir a mayúsculas) ──────
 function normalizarPlaca(placa) {
   return placa.replace(/[\s\-]/g, "").toUpperCase();
 }
 
-// ─── Buscar vehículo por placa (solo lectura, no crea) ────────────────────────
-// Busca la placa normalizada (sin espacios) para que coincida sin importar formato
 async function buscarVehiculo(placa) {
   const placaNorm = normalizarPlaca(placa);
 
-  // Primero intentar match exacto
   const { data: vehiculo } = await supabase
     .from("vehiculo")
     .select("id_vehiculo, placa, id_persona")
@@ -52,53 +49,40 @@ async function buscarVehiculo(placa) {
 
   if (vehiculo) return vehiculo;
 
-  // Si no hay match exacto, buscar todas las placas y comparar normalizadas
   const { data: todos } = await supabase
     .from("vehiculo")
     .select("id_vehiculo, placa, id_persona");
 
   if (todos) {
     const encontrado = todos.find(v => normalizarPlaca(v.placa) === placaNorm);
-    if (encontrado) {
-      console.log(`🔍 Placa normalizada: cámara envió "${placa}" → matcheó con "${encontrado.placa}" en BD`);
-      return encontrado;
-    }
+    if (encontrado) return encontrado;
   }
 
-  return null; // no existe
+  return null;
 }
 
 // ─── Registrar entrada (cámara) ───────────────────────────────────────────────
-// Si el vehículo NO está registrado → se niega la entrada y se notifica a garita
 async function registrarEntrada({ placa, dispositivoEntradaId }) {
   if (!placa) throw new Error("Placa requerida");
   placa = placa.trim().toUpperCase();
 
   const organizacion_id = await getOrganizacionDeDispositivo(dispositivoEntradaId);
-
-  // Solo buscar, NO crear automáticamente
   const vehiculo = await buscarVehiculo(placa);
 
-  // ── Vehículo no registrado: negar entrada ──
   if (!vehiculo) {
-    // Notificar a garita vía WebSocket para que decida (emitir ticket o ignorar)
     if (global.io) {
       global.io.emit("entrada-denegada", {
         placa,
         motivo: "VEHICULO_NO_REGISTRADO",
-        mensaje: `Vehículo con placa ${placa} no está registrado en el sistema`,
+        mensaje: `Vehículo con placa ${placa} no está registrado`,
         timestamp: new Date()
       });
     }
-
-    console.log(`🚫 Entrada denegada — placa ${placa} no registrada`);
-
-    const error = new Error(`Vehículo con placa ${placa} no está registrado. Debe acercarse a garita para emisión de ticket.`);
+    const error = new Error(`Vehículo con placa ${placa} no está registrado.`);
     error.code = "VEHICULO_NO_REGISTRADO";
     throw error;
   }
 
-  // ── Vehículo ya está dentro ──
   const { data: accesoActivo } = await supabase
     .from("acceso")
     .select("id_registro")
@@ -106,11 +90,8 @@ async function registrarEntrada({ placa, dispositivoEntradaId }) {
     .is("salida_at", null)
     .maybeSingle();
 
-  if (accesoActivo) {
-    throw new Error("Vehículo ya está dentro del parqueadero");
-  }
+  if (accesoActivo) throw new Error("Vehículo ya está dentro del parqueadero");
 
-  // ── Registrar acceso ──
   const { data: registro, error: accesoError } = await supabase
     .from("acceso")
     .insert({
@@ -125,11 +106,7 @@ async function registrarEntrada({ placa, dispositivoEntradaId }) {
   if (accesoError) throw accesoError;
 
   if (global.io) {
-    global.io.emit("access-event", {
-      type: "ENTRADA",
-      placa: vehiculo.placa,
-      timestamp: registro.entrada_at
-    });
+    global.io.emit("access-event", { type: "ENTRADA", placa: vehiculo.placa, timestamp: registro.entrada_at });
   }
 
   sendCommand("OPEN_MAIN");
@@ -138,7 +115,7 @@ async function registrarEntrada({ placa, dispositivoEntradaId }) {
 
 // ─── Registrar entrada de visitante ──────────────────────────────────────────
 async function registrarEntradaVisitante({ nombre, placa, dispositivoEntradaId, adminPersonaId, motivo }) {
-  if (!placa) throw new Error("Placa requerida para registrar entrada de visitante");
+  if (!placa) throw new Error("Placa requerida");
 
   const organizacion_id = await getOrganizacionDeDispositivo(dispositivoEntradaId);
   const vehiculo = await resolverVehiculo(placa, organizacion_id);
@@ -166,11 +143,7 @@ async function registrarEntradaVisitante({ nombre, placa, dispositivoEntradaId, 
   }
 
   if (global.io) {
-    global.io.emit("access-event", {
-      type: "ENTRADA",
-      placa: vehiculo.placa,
-      timestamp: registro.entrada_at
-    });
+    global.io.emit("access-event", { type: "ENTRADA", placa: vehiculo.placa, timestamp: registro.entrada_at });
   }
 
   sendCommand("OPEN_MAIN");
@@ -181,33 +154,28 @@ async function registrarEntradaVisitante({ nombre, placa, dispositivoEntradaId, 
 async function registrarSalida({ placa, dispositivoSalidaId }) {
   if (!placa) throw new Error("Placa requerida");
 
-  const { data: vehiculo, error: vehiculoError } = await supabase
+  const { data: vehiculo } = await supabase
     .from("vehiculo")
     .select("id_vehiculo, placa")
     .eq("placa", placa)
     .maybeSingle();
 
-  if (vehiculoError) throw vehiculoError;
   if (!vehiculo) throw new Error("Vehículo no encontrado");
 
-  const { data: acceso, error: accesoError } = await supabase
+  const { data: acceso } = await supabase
     .from("acceso")
     .select("id_registro, id_plaza")
     .eq("id_vehiculo", vehiculo.id_vehiculo)
     .is("salida_at", null)
     .maybeSingle();
 
-  if (accesoError) throw accesoError;
   if (!acceso) throw new Error("No hay entrada activa para este vehículo");
 
   const salidaAt = new Date();
 
   const { data: registro, error: updateError } = await supabase
     .from("acceso")
-    .update({
-      salida_at: salidaAt,
-      id_dispositivo_salida: dispositivoSalidaId || null
-    })
+    .update({ salida_at: salidaAt, id_dispositivo_salida: dispositivoSalidaId || null })
     .eq("id_registro", acceso.id_registro)
     .select()
     .single();
@@ -215,20 +183,13 @@ async function registrarSalida({ placa, dispositivoSalidaId }) {
   if (updateError) throw updateError;
 
   if (acceso.id_plaza) {
-    await supabase
-      .from("plaza")
-      .update({ id_estado: 1 })
-      .eq("id_plaza", acceso.id_plaza);
+    await supabase.from("plaza").update({ id_estado: 1 }).eq("id_plaza", acceso.id_plaza);
   }
 
   sendCommand("OPEN_EXIT");
 
   if (global.io) {
-    global.io.emit("access-event", {
-      type: "SALIDA",
-      placa: vehiculo.placa,
-      timestamp: salidaAt
-    });
+    global.io.emit("access-event", { type: "SALIDA", placa: vehiculo.placa, timestamp: salidaAt });
   }
 
   return registro;
@@ -237,7 +198,7 @@ async function registrarSalida({ placa, dispositivoSalidaId }) {
 // ─── Historial de accesos ─────────────────────────────────────────────────────
 async function getHistorialAccesos({ page = 1, limit = 20, fechaDesde, fechaHasta } = {}) {
   const from = (page - 1) * limit;
-  const to = from + limit - 1;
+  const to   = from + limit - 1;
 
   let query = supabase
     .from("acceso")
@@ -260,9 +221,7 @@ async function getHistorialAccesos({ page = 1, limit = 20, fechaDesde, fechaHast
   const registros = data.map(r => {
     let duracion_minutos = null;
     if (r.entrada_at && r.salida_at) {
-      duracion_minutos = Math.round(
-        (new Date(r.salida_at) - new Date(r.entrada_at)) / 60000
-      );
+      duracion_minutos = Math.round((new Date(r.salida_at) - new Date(r.entrada_at)) / 60000);
     }
     return { ...r, duracion_minutos };
   });
@@ -271,21 +230,23 @@ async function getHistorialAccesos({ page = 1, limit = 20, fechaDesde, fechaHast
 }
 
 // ─── Validar entrada por código de reserva ────────────────────────────────────
-// Llama a la RPC `validar_entrada_por_codigo` de la migración.
-// Retorna JSON con: valido, mensaje, datos del usuario, zona, vigencia.
+// CAMBIO: parámetro es p_codigo (nombre correcto en la RPC de BD)
+// CAMBIO: respuesta ahora incluye tickets_emitidos y capacidad
 async function validarEntradaPorCodigo(codigo) {
-  if (!codigo || typeof codigo !== "string" || codigo.trim().length === 0) {
+  if (!codigo || typeof codigo !== "string" || codigo.trim().length === 0)
     throw new Error("El código de reserva es requerido");
-  }
 
   const { data, error } = await supabase.rpc("validar_entrada_por_codigo", {
-    codigo: codigo.trim().toUpperCase()
+    p_codigo: codigo.trim().toUpperCase()
   });
 
   if (error) throw new Error(`Error al validar código: ${error.message}`);
-  if (!data) throw new Error("No se recibió respuesta de la validación");
+  if (!data)  throw new Error("No se recibió respuesta de la validación");
 
   return data;
+  // Respuesta incluye: valido, motivo|codigo_reserva, id_reserva_zona, id_zona,
+  //                    nombre_zona, nombre_persona, apellido_persona, email_persona,
+  //                    fecha_inicio, fecha_fin, tickets_emitidos, capacidad
 }
 
 export {

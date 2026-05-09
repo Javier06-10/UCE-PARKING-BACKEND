@@ -5,66 +5,51 @@ import { crearReserva, listarReservasUser, cancelarReserva } from "./reserva.ser
 import {
   crearReservaZona, listarReservasZonaUser, cancelarReservaZona,
   aprobarReservaZona, rechazarReservaZona, verificarDisponibilidad,
-  verificarAccesoReservaZona
+  verificarAccesoReservaZona, verificarPlacaParticipante
 } from "./reserva-zona.service.js";
 import supabase from "../../config/supabase.js";
 
 const router = express.Router();
 router.use(verifyToken);
 
-// ══════════════════════════════════════════════════════════════
-// HELPER — validar que tipo_persona.puede_reservar = true
-// ══════════════════════════════════════════════════════════════
+// ─── Helper ───────────────────────────────────────────────────────────────────
 async function validarPuedeReservar(userId) {
   const { data: usuario } = await supabase
     .from("usuario")
-    .select(`
-      id_persona,
-      persona ( id_tipo_persona, tipo_persona ( puede_reservar ) )
-    `)
-    .eq("id", userId)
-    .maybeSingle();
+    .select(`id_persona, persona ( id_tipo_persona, tipo_persona ( puede_reservar ) )`)
+    .eq("id", userId).maybeSingle();
 
-  const puedeReservar = usuario?.persona?.tipo_persona?.puede_reservar;
-  if (puedeReservar === false) {
+  if (usuario?.persona?.tipo_persona?.puede_reservar === false)
     throw new Error("Tu tipo de usuario no tiene habilitadas las reservas");
-  }
+}
+
+async function getOrgId(userId) {
+  const { data } = await supabase
+    .from("usuario").select("organizacion_id").eq("id", userId).maybeSingle();
+  return data?.organizacion_id ?? null;
 }
 
 // ══════════════════════════════════════════════════════════════
 // RESERVAS POR PLAZA ESPECÍFICA
 // ══════════════════════════════════════════════════════════════
 
-// ─────────────────────────────────────────────────────────────
-// GET /api/reserva/puede-reservar-zona
-// ✅ NUEVO: Verifica si el usuario autenticado puede reservar por zona
-// Usado por Flutter para mostrar/ocultar el tab "Por Zona"
-// ─────────────────────────────────────────────────────────────
 router.get("/puede-reservar-zona", async (req, res) => {
   try {
     const resultado = await verificarAccesoReservaZona(req.user.id);
     res.json({ ok: true, ...resultado });
   } catch (err) {
-    console.error("[reserva] puede-reservar-zona:", err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// POST /api/reserva
-// Crear reserva de plaza específica
-// Body: { plazaId, fechaInicio, fechaFin }
-// ─────────────────────────────────────────────────────────────
 router.post("/", async (req, res) => {
   try {
     const { plazaId, fechaInicio, fechaFin } = req.body;
-
     if (!plazaId || !fechaInicio || !fechaFin)
       return res.status(400).json({ ok: false, error: "plazaId, fechaInicio y fechaFin son requeridos" });
 
     const start = new Date(fechaInicio);
     const end   = new Date(fechaFin);
-
     if (isNaN(start) || isNaN(end))
       return res.status(400).json({ ok: false, error: "Fechas inválidas" });
     if (start < new Date())
@@ -75,19 +60,13 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Las reservas de plaza no pueden durar más de 2 horas" });
 
     await validarPuedeReservar(req.user.id);
-
     const reserva = await crearReserva(plazaId, req.user.id, start, end);
     res.status(201).json({ ok: true, reserva });
   } catch (err) {
-    console.error("[reserva] create:", err.message);
     res.status(400).json({ ok: false, error: err.message });
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// GET /api/reserva/mis-reservas
-// Historial de reservas de plaza del usuario con join completo
-// ─────────────────────────────────────────────────────────────
 router.get("/mis-reservas", async (req, res) => {
   try {
     const { page = 1, limit = 20, estado } = req.query;
@@ -97,21 +76,15 @@ router.get("/mis-reservas", async (req, res) => {
     });
     res.json({ ok: true, reservas: data });
   } catch (err) {
-    console.error("[reserva] list:", err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// PUT /api/reserva/:id/cancelar
-// Cancelar reserva de plaza activa
-// ─────────────────────────────────────────────────────────────
 router.put("/:id/cancelar", async (req, res) => {
   try {
     const data = await cancelarReserva(req.params.id, req.user.id);
     res.json({ ok: true, reserva: data });
   } catch (err) {
-    console.error("[reserva] cancel:", err.message);
     res.status(400).json({ ok: false, error: err.message });
   }
 });
@@ -120,10 +93,6 @@ router.put("/:id/cancelar", async (req, res) => {
 // RESERVAS POR ZONA
 // ══════════════════════════════════════════════════════════════
 
-// ─────────────────────────────────────────────────────────────
-// GET /api/reserva/zona/disponibilidad
-// Query: zonaId, inicio (ISO), fin (ISO)
-// ─────────────────────────────────────────────────────────────
 router.get("/zona/disponibilidad", async (req, res) => {
   try {
     const { zonaId, inicio, fin } = req.query;
@@ -131,7 +100,6 @@ router.get("/zona/disponibilidad", async (req, res) => {
       return res.status(400).json({ ok: false, error: "zonaId, inicio y fin son requeridos" });
 
     const plazas = await verificarDisponibilidad(Number(zonaId), inicio, fin);
-
     const { data: zona } = await supabase
       .from("zona")
       .select(`
@@ -142,29 +110,19 @@ router.get("/zona/disponibilidad", async (req, res) => {
           nivel_minimo_privilegio, requiere_empleado
         )
       `)
-      .eq("id_zona", zonaId)
-      .single();
+      .eq("id_zona", zonaId).single();
 
-    res.json({
-      ok: true,
-      plazas_disponibles: plazas,
-      disponible: plazas > 0,
-      zona
-    });
+    res.json({ ok: true, plazas_disponibles: plazas, disponible: plazas > 0, zona });
   } catch (err) {
-    console.error("[reserva] zona disponibilidad:", err.message);
     res.status(400).json({ ok: false, error: err.message });
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// POST /api/reserva/zona
-// ✅ Validación completa: empleado activo + nivel suficiente
-// Body: { zonaId, fechaInicio, fechaFin, placaVehiculo?, descripcion? }
-// ─────────────────────────────────────────────────────────────
+// CAMBIO: quitado placaVehiculo, agregado participantes[]
+// Body: { zonaId, fechaInicio, fechaFin, descripcion?, participantes?: [{id_persona, placa_vehiculo}] }
 router.post("/zona", async (req, res) => {
   try {
-    const { zonaId, fechaInicio, fechaFin, placaVehiculo, descripcion } = req.body;
+    const { zonaId, fechaInicio, fechaFin, descripcion, participantes } = req.body;
 
     if (!zonaId || !fechaInicio || !fechaFin)
       return res.status(400).json({ ok: false, error: "zonaId, fechaInicio y fechaFin son requeridos" });
@@ -172,13 +130,12 @@ router.post("/zona", async (req, res) => {
     const result = await crearReservaZona({
       zonaId, userId: req.user.id,
       fechaInicio, fechaFin,
-      placaVehiculo, descripcion
+      descripcion,
+      participantes: participantes || []
     });
 
     res.status(201).json({ ok: true, ...result });
   } catch (err) {
-    console.error("[reserva] zona create:", err.message);
-    // Devolver 403 si el error es de permisos, 400 si es de datos
     const code = err.message.includes("nivel") ||
                  err.message.includes("empleado") ||
                  err.message.includes("habilitadas") ? 403 : 400;
@@ -186,35 +143,24 @@ router.post("/zona", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// GET /api/reserva/zona/mis-reservas
-// ─────────────────────────────────────────────────────────────
 router.get("/zona/mis-reservas", async (req, res) => {
   try {
     const data = await listarReservasZonaUser(req.user.id);
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("[reserva] zona list:", err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// PUT /api/reserva/zona/:id/cancelar
-// ─────────────────────────────────────────────────────────────
 router.put("/zona/:id/cancelar", async (req, res) => {
   try {
     const data = await cancelarReservaZona(req.params.id, req.user.id);
     res.json({ ok: true, data });
   } catch (err) {
-    console.error("[reserva] zona cancel:", err.message);
     res.status(400).json({ ok: false, error: err.message });
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// PUT /api/reserva/zona/:id/aprobar  (admin)
-// ─────────────────────────────────────────────────────────────
 router.put("/zona/:id/aprobar", async (req, res) => {
   try {
     const { empleadoId, notas } = req.body;
@@ -225,9 +171,6 @@ router.put("/zona/:id/aprobar", async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────
-// PUT /api/reserva/zona/:id/rechazar  (admin)
-// ─────────────────────────────────────────────────────────────
 router.put("/zona/:id/rechazar", async (req, res) => {
   try {
     const { empleadoId, motivo } = req.body;
@@ -235,6 +178,93 @@ router.put("/zona/:id/rechazar", async (req, res) => {
     res.json({ ok: true, data });
   } catch (err) {
     res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/reserva/zona/verificar-placa/:placa
+// NUEVO: AccesoManual — detecta si una placa es participante de reserva activa
+// Devuelve: { es_participante, id_reserva_zona, codigo_reserva, nombre_zona, ... }
+// ─────────────────────────────────────────────────────────────
+router.get("/zona/verificar-placa/:placa", async (req, res) => {
+  try {
+    const orgId = await getOrgId(req.user.id);
+    const resultado = await verificarPlacaParticipante(req.params.placa, orgId);
+
+    if (!resultado) {
+      return res.json({ ok: true, es_participante: false });
+    }
+    res.json({ ok: true, ...resultado });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/reserva/zona/:id/participantes
+// NUEVO: Listar participantes de una reserva de zona (para mostrar en panel/app)
+// ─────────────────────────────────────────────────────────────
+router.get("/zona/:id/participantes", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("reserva_zona_participantes")
+      .select(`
+        id, placa_vehiculo, created_at,
+        persona:id_persona ( id_persona, nombre, apellido, email )
+      `)
+      .eq("id_reserva_zona", req.params.id)
+      .order("created_at");
+
+    if (error) throw error;
+    res.json({ ok: true, data: data ?? [] });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/reserva/zona/:id/participantes
+// NUEVO: Agregar participante a una reserva de zona (desde panel)
+// Body: { id_persona, placa_vehiculo? }
+// ─────────────────────────────────────────────────────────────
+router.post("/zona/:id/participantes", async (req, res) => {
+  try {
+    const { id_persona, placa_vehiculo } = req.body;
+    if (!id_persona)
+      return res.status(400).json({ ok: false, error: "id_persona es requerido" });
+
+    const { data, error } = await supabase
+      .from("reserva_zona_participantes")
+      .insert({
+        id_reserva_zona: Number(req.params.id),
+        id_persona,
+        placa_vehiculo: placa_vehiculo || null
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ ok: true, data });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// DELETE /api/reserva/zona/participantes/:id
+// NUEVO: Eliminar participante de una reserva
+// ─────────────────────────────────────────────────────────────
+router.delete("/zona/participantes/:id", async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from("reserva_zona_participantes")
+      .delete()
+      .eq("id", req.params.id);
+
+    if (error) throw error;
+    res.json({ ok: true, message: "Participante eliminado" });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
