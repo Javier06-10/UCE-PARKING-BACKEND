@@ -11,13 +11,14 @@ import authRoutes from "./modules/auth/auth.routes.js";
 import subscriptionRoutes from "./modules/suscripcion/Subscriptions.routes.js";
 import notificationRoutes from "./modules/notifications/notifications.routes.js";
 import catalogosRoutes from "./modules/catalogos/catalogos.routes.js";
+import sensorRoutes from "./modules/sensor/sensor.js";
 
 const app = express();
-
 app.use(cors({
   origin: process.env.FRONTEND_URL || "*",
   credentials: true
 }));
+
 
 // ⚠️ IMPORTANTE: El webhook de Stripe necesita el raw body ANTES de express.json()
 // Se registra primero con su propio middleware de body parsing
@@ -30,6 +31,8 @@ app.use(
 // Para el resto de rutas, JSON normal
 app.use(express.json());
 
+
+app.use('/api/sensor', sensorRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/access", accessRoutes);

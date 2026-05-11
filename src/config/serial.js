@@ -1,5 +1,6 @@
 import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
+import { createClient } from "@supabase/supabase-js";
 import env from "./env.js";
 import { updatePlazas } from "../modules/parking/parking.service.js";
 
@@ -9,6 +10,11 @@ let reconnectTimeout;
 
 // Estado previo para detectar cambios reales
 let lastPlazaState = null;
+
+// ── Supabase admin (service role) para registrar heartbeats ──
+const supabaseAdmin = env.supabaseUrl && env.supabaseKey
+  ? createClient(env.supabaseUrl, env.supabaseKey, { auth: { persistSession: false } })
+  : null;
 
 export const initSerial = () => {
   if (!env.serialPort) {
@@ -61,8 +67,8 @@ export const initSerial = () => {
   connect();
 };
 
-// ─── Procesar datos del Arduino ────────────────────────────────────────────────
-function handleSerialData(line) {
+// ─── Procesar datos del Arduino ─────────────────────────────────────────────
+async function handleSerialData(line) {
   const trimmed = line.trim();
   if (!trimmed) return;
 
@@ -71,6 +77,25 @@ function handleSerialData(line) {
 
     if (json.type === "plaza_update" && json.plazas) {
       handlePlazaUpdate(json.plazas);
+
+      // ── Registrar heartbeat automático en Supabase ──
+      // El Arduino no llama HTTP — lo hacemos aquí cada vez que envía datos
+      if (supabaseAdmin && env.arduinoDeviceId && env.arduinoOrgId) {
+        const occupied = json.plazas.filter((p) => p.occupied).length;
+        const total    = json.plazas.length;
+
+        supabaseAdmin
+          .rpc("fn_registrar_heartbeat", {
+            p_id_dispositivo:  env.arduinoDeviceId,
+            p_organizacion_id: env.arduinoOrgId,
+            p_payload:         { occupied, total, plazas: json.plazas },
+            p_es_error:        false,
+            p_mensaje_error:   null,
+          })
+          .then(({ error }) => {
+            if (error) console.warn("[Serial] Heartbeat RPC error:", error.message);
+          });
+      }
     }
 
     if (json.type === "gate_event") {
@@ -83,10 +108,10 @@ function handleSerialData(line) {
   }
 }
 
-// ─── Solo procesar si hubo cambio real ─────────────────────────────────────────
+// ─── Solo procesar si hubo cambio real ───────────────────────────────────────
 function handlePlazaUpdate(plazas) {
   const currentState = JSON.stringify(
-    plazas.map(p => ({ id: p.id, occupied: p.occupied }))
+    plazas.map((p) => ({ id: p.id, occupied: p.occupied }))
   );
 
   // Ignorar si el estado no cambió
@@ -94,7 +119,10 @@ function handlePlazaUpdate(plazas) {
 
   lastPlazaState = currentState;
 
-  console.log("🅿️ Cambio detectado en plazas:", plazas.map(p => `${p.id}:${p.occupied ? "⬛" : "⬜"}`).join(" "));
+  console.log(
+    "🅿️ Cambio detectado en plazas:",
+    plazas.map((p) => `${p.id}:${p.occupied ? "⬛" : "⬜"}`).join(" ")
+  );
 
   // Actualizar BD
   updatePlazas(plazas);
@@ -103,22 +131,29 @@ function handlePlazaUpdate(plazas) {
   if (global.io) {
     global.io.emit("plaza_update", {
       plazas,
-      normal: plazas.filter(p => !p.vip && p.occupied).length,
-      vip: plazas.filter(p => p.vip && p.occupied).length,
+      normal: plazas.filter((p) => !p.vip && p.occupied).length,
+      vip:    plazas.filter((p) =>  p.vip && p.occupied).length,
     });
   }
 }
 
-// ─── Enviar comando al Arduino ─────────────────────────────────────────────────
+// ─── Enviar comando al Arduino ────────────────────────────────────────────────
+// Acepta:
+//   string  → empaqueta como { command: "..." }  (OPEN_MAIN, OPEN_EXIT, OPEN_VIP)
+//   object  → serializa directamente
 export function sendCommand(command) {
   if (!port || !port.isOpen) {
     console.error("⚠ Serial no conectado — comando ignorado:", command);
     return;
   }
 
-  const json = JSON.stringify({ command });
-  port.write(json + "\n");
-  console.log("📤 Comando enviado:", command);
+  const payload =
+    typeof command === "string"
+      ? JSON.stringify({ command })
+      : JSON.stringify(command);
+
+  port.write(payload + "\n");
+  console.log("📤 Comando enviado:", payload);
 }
 
 export const getSerialPort = () => port;
