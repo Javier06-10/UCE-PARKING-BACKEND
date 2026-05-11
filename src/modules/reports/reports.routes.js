@@ -5,6 +5,7 @@ import {
   generarYGuardar,
   listarReportes,
   descargarReporteExcel,
+  descargarReportePDF,
   previsualizarNuevo,
   previsualizarExistente
 } from "./reports.controller.js";
@@ -28,7 +29,10 @@ router.get("/:id/preview", previsualizarExistente);
 // POST /api/reports           → generar y guardar reporte
 router.post("/", generarYGuardar);
 
-// GET  /api/reports/:id/download  → Generar Excel al vuelo
+// GET  /api/reports/:id/download      → Generar Excel al vuelo
 router.get("/:id/download", descargarReporteExcel);
+
+// GET  /api/reports/:id/download-pdf  → Generar PDF al vuelo (RF16.3)
+router.get("/:id/download-pdf", descargarReportePDF);
 
 export default router;

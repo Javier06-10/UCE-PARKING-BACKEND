@@ -6,6 +6,7 @@ import {
   getReportes
 } from "./reports.services.js";
 import { buildReporteExcel } from "./excel.generator.js";
+import { buildReportePDF } from "./pdf.generator.js";
 
 // ─── Helper: obtener nivel de privilegio y orgId ──────────────────────────────
 async function getNivelPrivilegio(userId) {
@@ -271,6 +272,77 @@ export async function descargarReporteExcel(req, res) {
     console.error("[reports] Error al descargar reporte:", error);
     if (!res.headersSent) {
       res.status(500).json({ ok: false, error: "No se pudo generar el documento Excel: " + error.message });
+    }
+  }
+}
+
+// GET /api/reports/:id/download-pdf
+export async function descargarReportePDF(req, res) {
+  try {
+    const { id } = req.params;
+
+    const { data: reporteRow, error } = await supabase
+      .from("reporte")
+      .select(`
+        id_reporte, ruta_adjunto, descripcion, created_at, organizacion_id,
+        tipo_reporte ( id_tipo, nombre )
+      `)
+      .eq("id_reporte", id)
+      .single();
+
+    if (error || !reporteRow) {
+      return res.status(404).json({ ok: false, message: "Reporte no encontrado" });
+    }
+
+    let payload = {};
+    try { payload = JSON.parse(reporteRow.ruta_adjunto); } catch (e) { /* ignorar */ }
+
+    let reporteData = payload;
+    const tipoNombre = reporteRow.tipo_reporte?.nombre || "GENERAL";
+
+    // Si la data está truncada, la recalculamos igual que en Excel
+    if (payload.resumen === "Data truncada por limite de columna") {
+      let dDesde = new Date(reporteRow.created_at).toISOString();
+      let dHasta = dDesde;
+
+      if (payload.periodo?.desde) {
+        dDesde = payload.periodo.desde;
+        dHasta = payload.periodo.hasta || dDesde;
+      } else {
+        const match = (reporteRow.descripcion || "").match(/general (.+?) - (.+?)$/);
+        if (match) {
+          dDesde = match[1].trim();
+          dHasta = match[2].trim();
+        }
+      }
+
+      if (tipoNombre === "EVENTOS") {
+        reporteData = await getReporteEventos({
+          fechaDesde: dDesde,
+          fechaHasta: dHasta,
+          organizacionId: reporteRow.organizacion_id
+        });
+      } else {
+        reporteData = await getReporteGeneral({
+          fechaDesde: dDesde,
+          fechaHasta: dHasta,
+          organizacionId: reporteRow.organizacion_id
+        });
+      }
+    }
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="reporte_${tipoNombre}_${id}.pdf"`
+    );
+
+    buildReportePDF(tipoNombre, reporteData, res);
+
+  } catch (error) {
+    console.error("[reports] Error al descargar PDF:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ ok: false, error: "No se pudo generar el PDF: " + error.message });
     }
   }
 }
