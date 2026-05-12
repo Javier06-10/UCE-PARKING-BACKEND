@@ -16,9 +16,20 @@ async function getOrgId(userId) {
   return data?.organizacion_id ?? null;
 }
 
+// ─── SELECT reutilizable ──────────────────────────────────────────────────────
+const PANTALLA_SELECT = `
+  id_pantalla,
+  capacidad_total,
+  organizacion_id,
+  id_zona,
+  id_plaza,
+  zona ( id_zona, nombre ),
+  plaza ( id_plaza, numero_plaza, id_zona )
+`;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/pantalla
-// Lista todas las pantallas de la organización con detalle de plaza y zona
+// Lista todas las pantallas de la organización
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   try {
@@ -27,15 +38,7 @@ router.get("/", async (req, res) => {
 
     const { data, error } = await supabase
       .from("pantalla")
-      .select(`
-        id_pantalla,
-        capacidad_total,
-        organizacion_id,
-        id_zona,
-        id_plaza,
-        zona ( id_zona, nombre ),
-        plaza ( id_plaza, numero_plaza, id_zona )
-      `)
+      .select(PANTALLA_SELECT)
       .eq("organizacion_id", orgId)
       .order("id_pantalla");
 
@@ -49,7 +52,7 @@ router.get("/", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/pantalla/:id
-// Obtener una pantalla por ID (debe pertenecer a la org)
+// Obtener una pantalla por ID
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/:id", async (req, res) => {
   try {
@@ -58,15 +61,7 @@ router.get("/:id", async (req, res) => {
 
     const { data, error } = await supabase
       .from("pantalla")
-      .select(`
-        id_pantalla,
-        capacidad_total,
-        organizacion_id,
-        id_zona,
-        id_plaza,
-        zona ( id_zona, nombre ),
-        plaza ( id_plaza, numero_plaza, id_zona )
-      `)
+      .select(PANTALLA_SELECT)
       .eq("id_pantalla", req.params.id)
       .eq("organizacion_id", orgId)
       .maybeSingle();
@@ -83,8 +78,8 @@ router.get("/:id", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/pantalla
-// Crear una nueva pantalla — id_plaza REQUERIDO
-// Body: { capacidad_total, id_plaza, id_zona? }
+// Crear pantalla — requiere capacidad_total y AL MENOS id_plaza O id_zona
+// Body: { capacidad_total, id_plaza?, id_zona? }
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/", async (req, res) => {
   try {
@@ -93,33 +88,57 @@ router.post("/", async (req, res) => {
 
     const { capacidad_total, id_plaza, id_zona } = req.body;
 
-    if (!capacidad_total || capacidad_total <= 0) {
+    if (!capacidad_total || Number(capacidad_total) <= 0) {
       return res.status(400).json({ ok: false, error: "capacidad_total es requerido y debe ser mayor a 0" });
     }
-    if (!id_plaza) {
-      return res.status(400).json({ ok: false, error: "id_plaza es requerido" });
+    if (!id_plaza && !id_zona) {
+      return res.status(400).json({ ok: false, error: "Debes indicar al menos una plaza (id_plaza) o una zona (id_zona)" });
     }
 
-    // Validar que la plaza pertenece a la organización
-    const { data: plaza, error: plazaErr } = await supabase
-      .from("plaza")
-      .select("id_plaza, id_zona")
-      .eq("id_plaza", id_plaza)
-      .eq("organizacion_id", orgId)
-      .maybeSingle();
+    const insertPayload = {
+      capacidad_total: Number(capacidad_total),
+      organizacion_id: orgId,
+      id_plaza: null,
+      id_zona:  null
+    };
 
-    if (plazaErr) throw plazaErr;
-    if (!plaza) return res.status(404).json({ ok: false, error: "Plaza no encontrada en esta organización" });
+    // ── Modo Plaza ──────────────────────────────────────────────────────────
+    if (id_plaza) {
+      const { data: plaza, error: plazaErr } = await supabase
+        .from("plaza")
+        .select("id_plaza, id_zona")
+        .eq("id_plaza", id_plaza)
+        .eq("organizacion_id", orgId)
+        .maybeSingle();
+
+      if (plazaErr) throw plazaErr;
+      if (!plaza) return res.status(404).json({ ok: false, error: "Plaza no encontrada en esta organización" });
+
+      insertPayload.id_plaza = plaza.id_plaza;
+      // La zona se hereda de la plaza si no viene explícita
+      insertPayload.id_zona = id_zona ? Number(id_zona) : (plaza.id_zona ?? null);
+    }
+
+    // ── Modo Zona (sin plaza específica) ────────────────────────────────────
+    if (!id_plaza && id_zona) {
+      const { data: zona, error: zonaErr } = await supabase
+        .from("zona")
+        .select("id_zona")
+        .eq("id_zona", id_zona)
+        .eq("organizacion_id", orgId)
+        .maybeSingle();
+
+      if (zonaErr) throw zonaErr;
+      if (!zona) return res.status(404).json({ ok: false, error: "Zona no encontrada en esta organización" });
+
+      insertPayload.id_zona = zona.id_zona;
+      // id_plaza queda null
+    }
 
     const { data, error } = await supabase
       .from("pantalla")
-      .insert({
-        capacidad_total,
-        id_plaza,
-        id_zona: id_zona ?? plaza.id_zona ?? null,
-        organizacion_id: orgId
-      })
-      .select()
+      .insert(insertPayload)
+      .select(PANTALLA_SELECT)
       .single();
 
     if (error) throw error;
@@ -132,14 +151,13 @@ router.post("/", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PUT /api/pantalla/:id
-// Actualizar pantalla — puede cambiar capacidad_total, id_plaza, id_zona
+// Actualizar — permite cambiar asignación a plaza, zona, o ambas
 // ─────────────────────────────────────────────────────────────────────────────
 router.put("/:id", async (req, res) => {
   try {
     const orgId = await getOrgId(req.user.id);
     if (!orgId) return res.status(403).json({ ok: false, error: "Organización no encontrada" });
 
-    // Verificar existencia
     const { data: existing } = await supabase
       .from("pantalla")
       .select("id_pantalla")
@@ -153,25 +171,46 @@ router.put("/:id", async (req, res) => {
     const updates = {};
 
     if (capacidad_total !== undefined) {
-      if (capacidad_total <= 0) return res.status(400).json({ ok: false, error: "capacidad_total debe ser mayor a 0" });
-      updates.capacidad_total = capacidad_total;
+      if (Number(capacidad_total) <= 0) {
+        return res.status(400).json({ ok: false, error: "capacidad_total debe ser mayor a 0" });
+      }
+      updates.capacidad_total = Number(capacidad_total);
     }
 
+    // ── Cambio a Plaza ──────────────────────────────────────────────────────
     if (id_plaza !== undefined) {
-      // Validar plaza
-      const { data: plaza } = await supabase
-        .from("plaza")
-        .select("id_plaza, id_zona")
-        .eq("id_plaza", id_plaza)
-        .eq("organizacion_id", orgId)
-        .maybeSingle();
-      if (!plaza) return res.status(404).json({ ok: false, error: "Plaza no encontrada en esta organización" });
-      updates.id_plaza = id_plaza;
-      // Actualizar zona de la plaza si no se especificó
-      if (id_zona === undefined) updates.id_zona = plaza.id_zona;
+      if (id_plaza === null || id_plaza === "") {
+        // Limpiar plaza — solo válido si se envía id_zona
+        updates.id_plaza = null;
+      } else {
+        const { data: plaza } = await supabase
+          .from("plaza")
+          .select("id_plaza, id_zona")
+          .eq("id_plaza", id_plaza)
+          .eq("organizacion_id", orgId)
+          .maybeSingle();
+        if (!plaza) return res.status(404).json({ ok: false, error: "Plaza no encontrada en esta organización" });
+        updates.id_plaza = plaza.id_plaza;
+        // Zona se hereda de la plaza si no se especifica explícitamente
+        if (id_zona === undefined) updates.id_zona = plaza.id_zona;
+      }
     }
 
-    if (id_zona !== undefined) updates.id_zona = id_zona;
+    // ── Cambio a Zona ───────────────────────────────────────────────────────
+    if (id_zona !== undefined) {
+      if (id_zona === null || id_zona === "") {
+        updates.id_zona = null;
+      } else {
+        const { data: zona } = await supabase
+          .from("zona")
+          .select("id_zona")
+          .eq("id_zona", id_zona)
+          .eq("organizacion_id", orgId)
+          .maybeSingle();
+        if (!zona) return res.status(404).json({ ok: false, error: "Zona no encontrada en esta organización" });
+        updates.id_zona = zona.id_zona;
+      }
+    }
 
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ ok: false, error: "No se enviaron campos para actualizar" });
@@ -182,7 +221,7 @@ router.put("/:id", async (req, res) => {
       .update(updates)
       .eq("id_pantalla", req.params.id)
       .eq("organizacion_id", orgId)
-      .select()
+      .select(PANTALLA_SELECT)
       .single();
 
     if (error) throw error;
@@ -195,7 +234,6 @@ router.put("/:id", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/pantalla/:id
-// Eliminar una pantalla
 // ─────────────────────────────────────────────────────────────────────────────
 router.delete("/:id", async (req, res) => {
   try {
