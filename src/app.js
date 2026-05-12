@@ -13,7 +13,7 @@ import notificationRoutes from "./modules/notifications/notifications.routes.js"
 import catalogosRoutes from "./modules/catalogos/catalogos.routes.js";
 import sensorRoutes from "./modules/sensor/sensor.js";
 import pantallaRoutes from "./modules/pantalla/pantalla.routes.js";
-
+import scannerRoutes from "./modules/scanner/Scanner.routes.js";
 const app = express();
 app.use(cors({
   origin: process.env.FRONTEND_URL || "*",
@@ -46,7 +46,7 @@ app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/catalogos", catalogosRoutes);
 app.use("/api/pantalla", pantallaRoutes);
-
+app.use("/api/scanner", scannerRoutes);
 app.get("/", (req, res) => {
   res.json({ message: "Backend UCE Parking 🚗", version: "1.0.0" });
 });
