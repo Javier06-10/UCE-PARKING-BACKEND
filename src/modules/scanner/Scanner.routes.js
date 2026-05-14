@@ -2,7 +2,7 @@
 
 import express from "express";
 import { verifyToken } from "../../middlewares/auth.middleware.js";
-import { salidaTicket, getTicketPorToken, testEscaner } from "./scanner.controller.js";
+import { salidaTicket, getTicketPorToken, testEscaner } from "./Scanner.controller.js";
 import { getScannerStatus } from "../../config/Scanner.serial.js";
 
 const router = express.Router();
