@@ -4,6 +4,7 @@ import app from "./app.js";
 import env from "./config/env.js";
 import { initSerial } from "./config/serial.js";
 import { initCronJobs } from "./core/cron.service.js"; // Importar cron jobs
+import { initScannerSerial } from "./config/Scanner.serial.js";
 
 const server = http.createServer(app);
 
@@ -17,6 +18,8 @@ app.set("io", io);
 
 // Inicializar serial después de que io esté disponible
 initSerial();
+// Escáner de código de barras — inicia solo si SCANNER_PORT está en
+// initScannerSerial();
 
 // Inicializar Cron Jobs
 initCronJobs();
