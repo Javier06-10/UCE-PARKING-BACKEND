@@ -2,41 +2,24 @@
 
 import express from "express";
 import { verifyToken } from "../../middlewares/auth.middleware.js";
-import { salidaTicket, getTicketPorToken, testEscaner } from "./Scanner.controller.js";
+import { salidaTicket, getTicketPorToken, testEscaner } from "./scanner.controller.js";
+import { getScannerStatus } from "../../config/Scanner.serial.js";
 
 const router = express.Router();
 router.use(verifyToken);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/scanner/salida-ticket
-// Principal: recibe el token leído por el escáner y procesa la salida completa
-//
-// Body:
-//   { token: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", dispositivoSalidaId?: 1 }
-//
-// Respuestas:
-//   200 → { ok, id_ticket, placa, visitante_nombre, duracion_minutos, ... }
-//   400 → token inválido o faltante
-//   404 → ticket no encontrado
-//   409 → ticket ya procesado o anulado
-// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/scanner/salida-ticket — fallback manual (Opción A) + modo sin serial
 router.post("/salida-ticket", salidaTicket);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/scanner/ticket/:token
-// Previsualizar ticket por token — el panel web lo usa para mostrar datos
-// ANTES de confirmar la salida (opcional, el panel puede usar esto para
-// mostrar al guardia los datos del visitante antes de abrir la barrera)
-//
-// Respuesta: { ok, data: { id_ticket, placa, visitante, estado, vencido, ... } }
-// ─────────────────────────────────────────────────────────────────────────────
+// GET  /api/scanner/ticket/:token — previsualizar ticket sin procesar
 router.get("/ticket/:token", getTicketPorToken);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/scanner/test
-// Solo desarrollo — simula la lectura del escáner sin hardware físico
-// Body: { token: "uuid" }
-// ─────────────────────────────────────────────────────────────────────────────
+// GET  /api/scanner/status — estado del escáner serial (conectado/desconectado)
+router.get("/status", (req, res) => {
+  res.json({ ok: true, scanner: getScannerStatus() });
+});
+
+// POST /api/scanner/test — solo desarrollo, simula lectura
 router.post("/test", testEscaner);
 
 export default router;

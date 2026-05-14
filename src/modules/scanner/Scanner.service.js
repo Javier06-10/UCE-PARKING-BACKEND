@@ -1,62 +1,83 @@
 // src/modules/scanner/scanner.service.js
-//
-// Flujo completo de salida por escáner de código de barras (Opción A):
-//   1. Buscar ticket por qr_token (UUID impreso en el código de barras)
-//   2. Validar estado y vencimiento
-//   3. Cerrar ticket
-//   4. Registrar salida en acceso
-//   5. Liberar plaza
-//   6. Registrar evento SALIDA_ESCANER
-//   7. Emitir WebSocket al panel
-//   8. Abrir barrera de salida (Arduino)
+// CORRECCIONES:
+//   - ESTADO_CERRADO = 2, ESTADO_VENCIDO = 3, ESTADO_ANULADO = 4 (BD real)
+//   - Ticket vencido → cierra con estado 3 (Vencido), igual registra salida y abre barrera
+//   - INSERT evento con campos correctos de la tabla evento
 
 import supabase from "../../config/supabase.js";
 import { sendCommand } from "../../config/serial.js";
 
-// IDs de estado_ticket (deben coincidir con BD)
+// IDs reales en BD (estado_ticket)
 const ESTADO_ACTIVO  = 1;
 const ESTADO_CERRADO = 2;
-const ESTADO_ANULADO = 3;
+const ESTADO_VENCIDO = 3;
+const ESTADO_ANULADO = 4;
 
-// ID de tipo_evento para SALIDA_ESCANER
+// ID tipo_evento SALIDA_ESCANER
 const TIPO_EVENTO_SALIDA_ESCANER = 30;
 
-// ─── Validar formato UUID ──────────────────────────────────────────────────────
 function esUUID(str) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
 // ─── Procesar salida por token de código de barras ────────────────────────────
 export async function procesarSalidaEscaner({ token, dispositivoSalidaId, operadorPersonaId }) {
-  if (!token || !esUUID(token.trim())) {
-    throw Object.assign(new Error("Token inválido — debe ser un UUID"), { code: "TOKEN_INVALIDO", status: 400 });
+  if (!token || typeof token !== "string") {
+    throw Object.assign(
+      new Error("Token inválido"),
+      { code: "TOKEN_INVALIDO", status: 400 }
+    );
   }
 
-  const tokenLimpio = token.trim().toLowerCase();
+  const tokenLimpio = token.trim();
+  let esFormatoUUID = esUUID(tokenLimpio.toLowerCase());
+  let idTicketFormato = null;
+
+  const matchLargo = tokenLimpio.match(/^TICKET-(\d+)-/i);
+  if (matchLargo) {
+    idTicketFormato = parseInt(matchLargo[1], 10);
+  } else {
+    const matchNum = tokenLimpio.match(/^(\d+)$/);
+    if (matchNum) idTicketFormato = parseInt(matchNum[1], 10);
+  }
+
+  if (!esFormatoUUID && !idTicketFormato) {
+    throw Object.assign(new Error("Formato de código no reconocido"), { code: "TOKEN_INVALIDO", status: 400 });
+  }
 
   // ── 1. Buscar ticket ─────────────────────────────────────────────────────────
-  const { data: ticket, error: ticketError } = await supabase
+  let query = supabase
     .from("ticket")
     .select(`
       id_ticket, placa_capturada, qr_token,
       fecha_hora_emision, fecha_hora_vencimiento,
       id_estado, id_plaza_asignada, organizacion_id,
-      visitante_nombre, visitante_apellido,
-      id_codigo_reserva,
-      estado_ticket ( nombre )
-    `)
-    .eq("qr_token", tokenLimpio)
-    .maybeSingle();
+      visitante_nombre, visitante_apellido, visitante_telefono,
+      descripcion, id_codigo_reserva,
+      estado_ticket ( id_estado, nombre )
+    `);
+
+  if (esFormatoUUID) {
+    query = query.eq("qr_token", tokenLimpio.toLowerCase());
+  } else {
+    query = query.eq("id_ticket", idTicketFormato);
+  }
+
+  const { data: ticket, error: ticketError } = await query.maybeSingle();
 
   if (ticketError) throw new Error("Error consultando ticket: " + ticketError.message);
+
   if (!ticket) {
-    throw Object.assign(new Error("Ticket no encontrado"), { code: "TICKET_NO_ENCONTRADO", status: 404 });
+    throw Object.assign(
+      new Error("Ticket no encontrado — verifica que el código sea correcto"),
+      { code: "TICKET_NO_ENCONTRADO", status: 404 }
+    );
   }
 
   // ── 2. Validar estado ────────────────────────────────────────────────────────
-  if (ticket.id_estado === ESTADO_CERRADO) {
+  if (ticket.id_estado === ESTADO_CERRADO || ticket.id_estado === ESTADO_VENCIDO) {
     throw Object.assign(
-      new Error("Este ticket ya fue procesado y la salida registrada"),
+      new Error("Este ticket ya fue procesado — la salida ya fue registrada"),
       { code: "TICKET_YA_PROCESADO", status: 409, ticket }
     );
   }
@@ -68,27 +89,32 @@ export async function procesarSalidaEscaner({ token, dispositivoSalidaId, operad
     );
   }
 
-  // ── 3. Validar vencimiento ───────────────────────────────────────────────────
+  // ── 3. Verificar vencimiento ─────────────────────────────────────────────────
   const ahora = new Date();
-  if (ticket.fecha_hora_vencimiento && new Date(ticket.fecha_hora_vencimiento) < ahora) {
-    // Aun así registramos la salida — el ticket venció pero el vehículo sigue adentro
-    console.warn(`[scanner] Ticket ${ticket.id_ticket} vencido — procesando salida de todas formas`);
+  const estaVencido = ticket.fecha_hora_vencimiento
+    ? new Date(ticket.fecha_hora_vencimiento) < ahora
+    : false;
+
+  if (estaVencido) {
+    console.warn(`[scanner] Ticket #${ticket.id_ticket} vencido — procesando salida de todas formas`);
   }
 
-  // ── 4. Cerrar ticket ─────────────────────────────────────────────────────────
+  // ── 4. Cerrar ticket — vencido queda como estado 3, normal como 2 ───────────
+  const nuevoEstado = estaVencido ? ESTADO_VENCIDO : ESTADO_CERRADO;
+
   const { error: closeError } = await supabase
     .from("ticket")
-    .update({ id_estado: ESTADO_CERRADO })
+    .update({ id_estado: nuevoEstado })
     .eq("id_ticket", ticket.id_ticket);
 
   if (closeError) throw new Error("Error cerrando ticket: " + closeError.message);
 
-  // ── 5. Registrar salida en acceso ────────────────────────────────────────────
-  let registroAcceso = null;
+  // ── 5. Registrar salida en acceso + liberar plaza ────────────────────────────
+  let registroAcceso   = null;
   let duracion_minutos = null;
+  let plazaLiberada    = null;
 
   if (ticket.placa_capturada) {
-    // Buscar el vehículo por placa
     const { data: vehiculo } = await supabase
       .from("vehiculo")
       .select("id_vehiculo")
@@ -96,7 +122,6 @@ export async function procesarSalidaEscaner({ token, dispositivoSalidaId, operad
       .maybeSingle();
 
     if (vehiculo) {
-      // Buscar acceso activo (sin salida_at)
       const { data: accesoActivo } = await supabase
         .from("acceso")
         .select("id_registro, entrada_at, id_plaza")
@@ -119,79 +144,108 @@ export async function procesarSalidaEscaner({ token, dispositivoSalidaId, operad
 
         registroAcceso = accesoActualizado;
 
-        // Calcular duración
         if (accesoActivo.entrada_at) {
           duracion_minutos = Math.round(
             (ahora - new Date(accesoActivo.entrada_at)) / 60000
           );
         }
 
-        // ── 6. Liberar plaza ─────────────────────────────────────────────────
         const plazaId = accesoActivo.id_plaza || ticket.id_plaza_asignada;
         if (plazaId) {
           await supabase
             .from("plaza")
-            .update({ id_estado: 1 }) // Libre
+            .update({ id_estado: 1 })
             .eq("id_plaza", plazaId);
+          plazaLiberada = plazaId;
         }
       }
     }
   }
 
-  // ── 7. Registrar evento SALIDA_ESCANER ───────────────────────────────────────
+  // ── 6. Registrar evento SALIDA_ESCANER ───────────────────────────────────────
   const visitanteNombre = [ticket.visitante_nombre, ticket.visitante_apellido]
     .filter(Boolean).join(" ") || "Sin nombre";
 
+  const descripcionEvento =
+    `Salida por escáner. ` +
+    `Placa: ${ticket.placa_capturada || "N/A"}. ` +
+    `Visitante: ${visitanteNombre}. ` +
+    `Ticket: #${ticket.id_ticket}. ` +
+    `Duración: ${duracion_minutos != null ? duracion_minutos + " min" : "N/A"}.` +
+    (estaVencido ? " [TICKET VENCIDO]" : "");
+
   await supabase.from("evento").insert({
-    fecha_hora:       ahora.toISOString(),
-    descripcion:      `Salida por escáner. Placa: ${ticket.placa_capturada || "N/A"}. Visitante: ${visitanteNombre}. Ticket: #${ticket.id_ticket}. Duración: ${duracion_minutos ?? "N/A"} min.`,
-    id_persona:       operadorPersonaId || null,
-    organizacion_id:  ticket.organizacion_id,
-    id_tipo:          TIPO_EVENTO_SALIDA_ESCANER,
-    created_at:       ahora.toISOString()
+    fecha_hora:      ahora.toISOString(),
+    descripcion:     descripcionEvento,
+    id_persona:      operadorPersonaId || null,
+    organizacion_id: ticket.organizacion_id,
+    id_tipo:         TIPO_EVENTO_SALIDA_ESCANER,
+    created_at:      ahora.toISOString()
   });
 
-  // ── 8. WebSocket al panel ────────────────────────────────────────────────────
-  const payload = {
+  // ── 7. WebSocket al panel ────────────────────────────────────────────────────
+  const socketPayload = {
     type:              "SALIDA_ESCANER",
     id_ticket:         ticket.id_ticket,
     placa:             ticket.placa_capturada,
     visitante:         visitanteNombre,
     duracion_minutos,
+    vencido:           estaVencido,
     timestamp:         ahora.toISOString(),
     id_codigo_reserva: ticket.id_codigo_reserva || null
   };
 
   if (global.io) {
-    global.io.emit("salida-escaner", payload);
-    global.io.emit("access-event", { type: "SALIDA", placa: ticket.placa_capturada, timestamp: ahora });
+    global.io.emit("salida-escaner", socketPayload);
+    global.io.emit("access-event", {
+      type:      "SALIDA",
+      placa:     ticket.placa_capturada,
+      timestamp: ahora.toISOString()
+    });
   }
 
-  // ── 9. Abrir barrera de salida ───────────────────────────────────────────────
+  // ── 8. Abrir barrera de salida ───────────────────────────────────────────────
   sendCommand("OPEN_EXIT");
 
   return {
-    ok:                true,
-    id_ticket:         ticket.id_ticket,
-    placa:             ticket.placa_capturada,
-    visitante_nombre:  ticket.visitante_nombre,
-    visitante_apellido: ticket.visitante_apellido,
-    fecha_emision:     ticket.fecha_hora_emision,
-    fecha_salida:      ahora.toISOString(),
+    ok:                 true,
+    id_ticket:          ticket.id_ticket,
+    placa:              ticket.placa_capturada,
+    visitante_nombre:   ticket.visitante_nombre   || null,
+    visitante_apellido: ticket.visitante_apellido || null,
+    fecha_emision:      ticket.fecha_hora_emision,
+    fecha_salida:       ahora.toISOString(),
     duracion_minutos,
-    id_codigo_reserva: ticket.id_codigo_reserva || null,
-    acceso:            registroAcceso
+    vencido:            estaVencido,
+    plaza_liberada:     plazaLiberada,
+    id_codigo_reserva:  ticket.id_codigo_reserva || null,
+    acceso:             registroAcceso
   };
 }
 
-// ─── Previsualizar ticket por token (sin procesar) ───────────────────────────
-// El panel puede mostrar los datos antes de confirmar la salida
+// ─── Previsualizar ticket por token (sin procesar) ────────────────────────────
 export async function previsualizarTicket(token) {
-  if (!token || !esUUID(token.trim())) {
+  if (!token || typeof token !== "string") {
     throw Object.assign(new Error("Token inválido"), { code: "TOKEN_INVALIDO", status: 400 });
   }
 
-  const { data: ticket, error } = await supabase
+  const tokenLimpio = token.trim();
+  let esFormatoUUID = esUUID(tokenLimpio.toLowerCase());
+  let idTicketFormato = null;
+
+  const matchLargo = tokenLimpio.match(/^TICKET-(\d+)-/i);
+  if (matchLargo) {
+    idTicketFormato = parseInt(matchLargo[1], 10);
+  } else {
+    const matchNum = tokenLimpio.match(/^(\d+)$/);
+    if (matchNum) idTicketFormato = parseInt(matchNum[1], 10);
+  }
+
+  if (!esFormatoUUID && !idTicketFormato) {
+    throw Object.assign(new Error("Formato de código no reconocido"), { code: "TOKEN_INVALIDO", status: 400 });
+  }
+
+  let query = supabase
     .from("ticket")
     .select(`
       id_ticket, placa_capturada, qr_token,
@@ -199,18 +253,24 @@ export async function previsualizarTicket(token) {
       id_estado, id_plaza_asignada, organizacion_id,
       visitante_nombre, visitante_apellido, visitante_telefono,
       descripcion, id_codigo_reserva,
-      estado_ticket ( nombre ),
+      estado_ticket ( id_estado, nombre ),
       plaza:id_plaza_asignada ( numero_plaza, zona ( nombre ) )
-    `)
-    .eq("qr_token", token.trim().toLowerCase())
-    .maybeSingle();
+    `);
+
+  if (esFormatoUUID) {
+    query = query.eq("qr_token", tokenLimpio.toLowerCase());
+  } else {
+    query = query.eq("id_ticket", idTicketFormato);
+  }
+
+  const { data: ticket, error } = await query.maybeSingle();
 
   if (error) throw new Error("Error consultando ticket: " + error.message);
   if (!ticket) {
     throw Object.assign(new Error("Ticket no encontrado"), { code: "TICKET_NO_ENCONTRADO", status: 404 });
   }
 
-  const ahora = new Date();
+  const ahora   = new Date();
   const vencido = ticket.fecha_hora_vencimiento
     ? new Date(ticket.fecha_hora_vencimiento) < ahora
     : false;
@@ -218,7 +278,7 @@ export async function previsualizarTicket(token) {
   return {
     ...ticket,
     vencido,
-    ya_procesado: ticket.id_estado === ESTADO_CERRADO,
+    ya_procesado: ticket.id_estado === ESTADO_CERRADO || ticket.id_estado === ESTADO_VENCIDO,
     anulado:      ticket.id_estado === ESTADO_ANULADO
   };
 }
