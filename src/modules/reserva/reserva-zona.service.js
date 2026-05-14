@@ -65,8 +65,11 @@ async function validarAccesoZona(ctx, config, zona) {
       `Tu nivel (${ctx.nivel}) no es suficiente. Se requiere nivel ${config.nivel_minimo_privilegio}.`
     );
 
-  if (zona.id_tipo === 3 && ctx.nivel < 7)
+  if (zona.id_tipo === 2 && ctx.nivel < 7)
     throw new Error("Esta zona es VIP. Se requiere cargo de Director o superior.");
+
+  if (zona.id_tipo === 3 && ctx.nivel < 3)
+    throw new Error("Esta zona es administrativa. Se requiere nivel 3 o superior.");
 }
 
 async function _resolveTipoPersona(idTipo) {

@@ -47,18 +47,40 @@ export async function crearReserva(plazaId, userId, start, end) {
   if (personaData?.tipo_persona?.puede_reservar === false) {
     throw new Error("Tu tipo de usuario no tiene permitido realizar reservas");
   }
+  // Obtener nivel de privilegio
+  const { data: empleado } = await supabase
+    .from("empleado")
+    .select("cargo(nivel_privilegio)")
+    .eq("id_persona", personaId)
+    .maybeSingle();
+  const nivel = empleado?.cargo?.nivel_privilegio ?? 1;
   // ----------------------------------------------------
 
-  // 2. Verificar que la zona de la plaza esta activa
+  // 2. Verificar que la zona de la plaza esta activa y permitida
   const { data: plazaZona } = await supabase
     .from("plaza")
-    .select("id_plaza, zona ( id_estado )")
+    .select("id_plaza, zona ( id_estado, id_tipo, config_reserva_zona ( nivel_minimo_privilegio ) )")
     .eq("id_plaza", plazaId)
     .maybeSingle();
 
-  if (!plazaZona) throw new Error("Plaza no encontrada.");
-  if (plazaZona.zona?.id_estado !== 1) {
+  if (!plazaZona || !plazaZona.zona) throw new Error("Plaza no encontrada.");
+  const zonaInfo = plazaZona.zona;
+
+  if (zonaInfo.id_estado !== 1) {
     throw new Error("La zona de esta plaza no esta disponible para reservas.");
+  }
+
+  const config = zonaInfo.config_reserva_zona?.[0];
+  const nivelMinimo = config?.nivel_minimo_privilegio ?? 1;
+
+  if (nivel < nivelMinimo) {
+    throw new Error(`Tu nivel (${nivel}) no es suficiente. Se requiere nivel ${nivelMinimo}.`);
+  }
+  if (zonaInfo.id_tipo === 2 && nivel < 7) {
+    throw new Error("Esta zona es VIP. Se requiere cargo de Director o superior.");
+  }
+  if (zonaInfo.id_tipo === 3 && nivel < 3) {
+    throw new Error("Esta zona es administrativa. Se requiere nivel 3 o superior.");
   }
 
   // 3. Verificar solapamiento (NuevoInicio < FinExistente AND NuevoFin > InicioExistente)

@@ -50,6 +50,9 @@ function filtrarZonasMovil(zonas, nivelUsuario, tiposAccesibles) {
     const nivelMin = z.config_reserva_zona?.[0]?.nivel_minimo_privilegio ?? 1;
     if (nivelUsuario < nivelMin) return false;
 
+    // 4. visible_movil
+    if (z.tipo_zona?.visible_movil === false && nivelUsuario < 3) return false;
+
     return true;
   });
 }
@@ -68,7 +71,7 @@ router.get("/status", async (req, res) => {
       .select(`
         id_zona, nombre, capacidad_total, descripcion,
         id_tipo, id_estado, latitud, longitud, direccion, nivel_piso,
-        tipo_zona ( id_tipo, nombre ),
+        tipo_zona ( id_tipo, nombre, visible_movil ),
         estado_zona ( id_estado, nombre ),
         config_reserva_zona ( nivel_minimo_privilegio, permite_horas, permite_dias, requiere_aprobacion ),
         plaza ( id_plaza, id_estado )

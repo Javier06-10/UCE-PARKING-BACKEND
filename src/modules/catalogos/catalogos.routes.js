@@ -41,7 +41,7 @@ router.get("/zonas", async (req, res) => {
       .select(`
         id_zona, nombre, capacidad_total, descripcion,
         id_tipo, id_estado, latitud, longitud, direccion, nivel_piso,
-        tipo_zona ( id_tipo, nombre ),
+        tipo_zona ( id_tipo, nombre, visible_movil ),
         estado_zona ( id_estado, nombre ),
         config_reserva_zona (
           permite_horas, permite_dias, max_horas, max_dias,
@@ -64,6 +64,8 @@ router.get("/zonas", async (req, res) => {
       // nivel_minimo de la config
       const nivelMin = z.config_reserva_zona?.[0]?.nivel_minimo_privilegio ?? 1;
       if (nivel < nivelMin) return false;
+      // visible_movil
+      if (z.tipo_zona?.visible_movil === false && nivel < 3) return false;
       return true;
     });
 
